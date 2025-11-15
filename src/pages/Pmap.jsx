@@ -1,16 +1,16 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FormattedMessage, useIntl } from 'react-intl';
-import Map, { Marker, Source, Layer } from 'react-map-gl';
+import Map, { Marker } from 'react-map-gl';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import esriImageryStyle from '../services/esriImageryStyle';
 import { useLangStore } from '../store/langStore';
 import { buildGeoJsonPath } from '../utils/geojsonPath.js';
 import { groups } from '../components/groupData';
 import { toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import '../styles/Pmap.css';
+import useOfflineMapStyle from '../hooks/useOfflineMapStyle';
 
 const groupColors = {
   sahn: '#4caf50',
@@ -61,6 +61,7 @@ const Pmap = () => {
   const navigate = useNavigate();
   const intl = useIntl();
   const language = useLangStore(state => state.language);
+  const { mapStyle, handleMapError } = useOfflineMapStyle();
 
   const [viewState, setViewState] = useState({
     latitude: 36.2880,
@@ -316,12 +317,13 @@ const Pmap = () => {
       <div className="pmap-container">
         <Map
           mapLib={maplibregl}
-          mapStyle={esriImageryStyle}
+          mapStyle={mapStyle}
           style={{ width: '100%', height: '100%' }}
           {...viewState}
           onMove={onMove}
           onClick={handleMapClick}
           onLoad={handleMapLoad}
+          onError={handleMapError}
           interactive={true}
         >
           {/* Selected place marker */}

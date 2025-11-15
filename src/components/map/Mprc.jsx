@@ -3,7 +3,7 @@ import Map, { Marker, Source, Layer } from 'react-map-gl';
 import { useIntl } from 'react-intl';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import esriImageryStyle from '../../services/esriImageryStyle';
+import useOfflineMapStyle from '../../hooks/useOfflineMapStyle';
 import { useLangStore } from '../../store/langStore';
 import { buildGeoJsonPath } from '../../utils/geojsonPath.js';
 import { groups } from '../groupData';
@@ -76,6 +76,7 @@ const Mprc = ({
   const [geoData, setGeoData] = useState(null);
   const [routeCoords, setRouteCoords] = useState(null);
   const language = useLangStore((state) => state.language);
+  const { mapStyle, handleMapError } = useOfflineMapStyle();
 
   const onMove = useCallback((evt) => {
     setViewState(evt.viewState);
@@ -312,11 +313,12 @@ const Mprc = ({
   return (
     <Map
       mapLib={maplibregl}
-      mapStyle={esriImageryStyle}
+      mapStyle={mapStyle}
       style={{ width: '100%', height: '100%' }}
       {...viewState}
       onMove={onMove}
       onClick={handleClick}
+      onError={handleMapError}
       interactive={true}
     >
       {/* User location marker */}

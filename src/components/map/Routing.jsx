@@ -2,13 +2,14 @@ import React, { useEffect, useState } from 'react';
 import Map, { Marker, Source, Layer } from 'react-map-gl';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import esriImageryStyle from '../../services/esriImageryStyle';
+import useOfflineMapStyle from '../../hooks/useOfflineMapStyle';
 import GeoJsonOverlay from './GeoJsonOverlay';
 import useLocaleDigits from '../../utils/useLocaleDigits';
 
 
 const Routing = ({ userLocation, routeSteps, currentStep }) => {
   const formatDigits = useLocaleDigits();
+  const { mapStyle, handleMapError } = useOfflineMapStyle();
   const initial = routeSteps && routeSteps.length > 0 ? routeSteps[0].coordinates : [36.2880, 59.6157];
   const [viewState, setViewState] = useState({ latitude: initial[0], longitude: initial[1], zoom: 18 });
 
@@ -35,9 +36,10 @@ const Routing = ({ userLocation, routeSteps, currentStep }) => {
     <div ref={null} className="route-map">
       <Map
         mapLib={maplibregl}
-        mapStyle={esriImageryStyle}
+        mapStyle={mapStyle}
         style={{ width: '100%', height: '100%' }}
         viewState={viewState}
+        onError={handleMapError}
       >
         {userLocation && (
           <Marker longitude={userLocation[1]} latitude={userLocation[0]} anchor="bottom">
