@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import esriImageryStyle, { offlineFallbackStyle } from '../services/esriImageryStyle';
+import osmMapStyle, { offlineFallbackStyle } from '../services/osmMapStyle';
 import { toast } from 'react-toastify';
 
 const FALLBACK_TOAST_ID = 'map-tiles-fallback-notice';
@@ -8,7 +8,7 @@ const FALLBACK_TOAST_ID = 'map-tiles-fallback-notice';
  * Provides a map style that automatically falls back to an offline-friendly version
  * whenever MapLibre fails to load raster tiles (e.g., due to blocked network access).
  */
-export default function useOfflineMapStyle(initialStyle = esriImageryStyle) {
+export default function useOfflineMapStyle(initialStyle = osmMapStyle) {
   const [mapStyle, setMapStyle] = useState(initialStyle);
   const [isFallback, setIsFallback] = useState(initialStyle === offlineFallbackStyle);
   const hasSwitchedRef = useRef(initialStyle === offlineFallbackStyle);
