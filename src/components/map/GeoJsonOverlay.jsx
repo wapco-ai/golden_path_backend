@@ -177,6 +177,51 @@ const GeoJsonOverlay = ({ selectedCategory, routeCoords = null }) => {
     'line-blur': 1.5
   };
 
+  const polygonFillPaint = {
+    'fill-color': [
+      'case',
+      ['has', 'group'],
+      [
+        'match',
+        ['get', 'group'],
+        'sahn', '#a5d6a7',
+        'eyvan', '#90caf9',
+        'ravaq', '#ce93d8',
+        'masjed', '#ffcc80',
+        'madrese', '#9fa8da',
+        'khadamat', '#b0bec5',
+        'elmi', '#80deea',
+        'cemetery', '#bcaaa4',
+        '#e0e0e0'
+      ],
+      '#e0e0e0'
+    ],
+    'fill-opacity': 0.35
+  };
+
+  const polygonOutlinePaint = {
+    'line-color': [
+      'case',
+      ['has', 'group'],
+      [
+        'match',
+        ['get', 'group'],
+        'sahn', '#4caf50',
+        'eyvan', '#2196f3',
+        'ravaq', '#9c27b0',
+        'masjed', '#ff9800',
+        'madrese', '#3f51b5',
+        'khadamat', '#607d8b',
+        'elmi', '#00bcd4',
+        'cemetery', '#795548',
+        '#757575'
+      ],
+      '#757575'
+    ],
+    'line-width': 2,
+    'line-opacity': 0.85
+  };
+
   return (
     <>
       {polygonFeatures.length > 0 && (
