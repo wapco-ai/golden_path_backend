@@ -1,10 +1,12 @@
 
 
+import appConfig from '../config/appConfig.js';
 import { useLangStore } from '../store/langStore.js';
 
 const EARTH_RADIUS_METERS = 6371000;
 const GEOJSON_ROUTE_MATCH_TOLERANCE_METERS = 30;
 const GEOJSON_ROUTE_NODE_SNAP_METERS = 20;
+const DOOR_BOUNDARY_TOLERANCE_METERS = Number(appConfig.doorBoundaryToleranceMeters) || 4;
 
 const COVERED_ENTRY_NAMES = {
   fa: 'ورودی مسقف',
@@ -373,8 +375,133 @@ function segmentsIntersect(p1, p2, p3, p4) {
   return false;
 }
 
+function extractLineStrings(geometry) {
+  if (!geometry) return [];
+  if (geometry.type === 'LineString') return [geometry.coordinates];
+  if (geometry.type === 'MultiLineString') return geometry.coordinates;
+  return [];
+}
+
+function buildDoorLineNodes(lineFeatures) {
+  const nodes = [];
+  const seen = new Set();
+
+  lineFeatures.forEach(feature => {
+    const lines = extractLineStrings(feature.geometry);
+    lines.forEach(lineCoords => {
+      if (!Array.isArray(lineCoords) || lineCoords.length === 0) return;
+
+      for (let i = 0; i < lineCoords.length; i++) {
+        const coord = lineCoords[i];
+        addLineNode(coord, feature);
+
+        if (i < lineCoords.length - 1) {
+          const nextCoord = lineCoords[i + 1];
+          const mid = [
+            (coord[0] + nextCoord[0]) / 2,
+            (coord[1] + nextCoord[1]) / 2
+          ];
+          addLineNode(mid, feature);
+        }
+      }
+    });
+  });
+
+  function addLineNode(coord, feature) {
+    if (!coord || coord.length < 2) return;
+    const [lng, lat] = coord;
+    const key = `${lat.toFixed(8)}:${lng.toFixed(8)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    const props = { ...(feature.properties || {}), isDoorLineNode: true };
+    nodes.push([lat, lng, props, 0, feature]);
+  }
+
+  return nodes;
+}
+
+function getDoorLineSegments(lineFeatures) {
+  const segments = [];
+  lineFeatures.forEach(feature => {
+    const lines = extractLineStrings(feature.geometry);
+    lines.forEach(lineCoords => {
+      if (!Array.isArray(lineCoords) || lineCoords.length < 2) return;
+      for (let i = 0; i < lineCoords.length - 1; i++) {
+        const start = lineCoords[i];
+        const end = lineCoords[i + 1];
+        segments.push([
+          [start[0], start[1]],
+          [end[0], end[1]]
+        ]);
+      }
+    });
+  });
+  return segments;
+}
+
+function projectPointToMeters(point, refLat) {
+  const latRad = (point[1] * Math.PI) / 180;
+  const lngRad = (point[0] * Math.PI) / 180;
+  const refLatRad = (refLat * Math.PI) / 180;
+  return {
+    x: EARTH_RADIUS_METERS * lngRad * Math.cos(refLatRad),
+    y: EARTH_RADIUS_METERS * latRad
+  };
+}
+
+function pointToSegmentDistanceMeters(point, segStart, segEnd) {
+  const vx = segEnd.x - segStart.x;
+  const vy = segEnd.y - segStart.y;
+  const wx = point.x - segStart.x;
+  const wy = point.y - segStart.y;
+
+  const c1 = vx * wx + vy * wy;
+  if (c1 <= 0) {
+    return Math.hypot(point.x - segStart.x, point.y - segStart.y);
+  }
+
+  const c2 = vx * vx + vy * vy;
+  if (c2 <= c1) {
+    return Math.hypot(point.x - segEnd.x, point.y - segEnd.y);
+  }
+
+  const b = c1 / c2;
+  const projX = segStart.x + b * vx;
+  const projY = segStart.y + b * vy;
+  return Math.hypot(point.x - projX, point.y - projY);
+}
+
+function segmentsWithinTolerance(seg1Start, seg1End, seg2Start, seg2End, toleranceMeters) {
+  if (segmentsIntersect(seg1Start, seg1End, seg2Start, seg2End)) {
+    return true;
+  }
+
+  const refLat = (seg1Start[1] + seg1End[1] + seg2Start[1] + seg2End[1]) / 4;
+  const a1 = projectPointToMeters(seg1Start, refLat);
+  const a2 = projectPointToMeters(seg1End, refLat);
+  const b1 = projectPointToMeters(seg2Start, refLat);
+  const b2 = projectPointToMeters(seg2End, refLat);
+
+  const distances = [
+    pointToSegmentDistanceMeters(a1, b1, b2),
+    pointToSegmentDistanceMeters(a2, b1, b2),
+    pointToSegmentDistanceMeters(b1, a1, a2),
+    pointToSegmentDistanceMeters(b2, a1, a2)
+  ];
+
+  return distances.some(d => d <= toleranceMeters);
+}
+
+function isEdgePassable(edgeStart, edgeEnd, doorSegments, toleranceMeters) {
+  if (!doorSegments || doorSegments.length === 0) return false;
+  if (!toleranceMeters || toleranceMeters <= 0) return false;
+  return doorSegments.some(segment =>
+    segmentsWithinTolerance(edgeStart, edgeEnd, segment[0], segment[1], toleranceMeters)
+  );
+}
+
 // Check if a direct line crosses any polygon WITHOUT nodes
-function crossesEmptyPolygons(coord1, coord2, polygons, nodes) {
+function crossesEmptyPolygons(coord1, coord2, polygons, nodes, doorSegments = [], toleranceMeters = 0) {
   const p1 = [coord1[1], coord1[0]]; // Convert to [lng, lat]
   const p2 = [coord2[1], coord2[0]];
 
@@ -392,6 +519,9 @@ function crossesEmptyPolygons(coord1, coord2, polygons, nodes) {
       const p3 = vertices[i];
       const p4 = vertices[i + 1];
       if (segmentsIntersect(p1, p2, p3, p4)) {
+        if (isEdgePassable(p3, p4, doorSegments, toleranceMeters)) {
+          continue;
+        }
         console.log(`Line blocked by empty polygon: ${polygon.properties?.subGroupValue}`);
         return true;
       }
@@ -426,19 +556,19 @@ function polygonCentroid(polygon) {
 }
 
 // If a line inside a polygon is obstructed, return a curved path via centroid
-function adjustSegmentInsidePolygon(start, end, polygons) {
+function adjustSegmentInsidePolygon(start, end, polygons, doorSegments = [], toleranceMeters = 0) {
   const poly = getPolygonContaining(start, polygons);
   if (!poly) return [end];
   if (getPolygonContaining(end, polygons) !== poly) return [end];
   const coveredName = getCoveredEntryName();
   if (poly.properties?.name === coveredName) return [end];
-  if (!isLineObstructed(start, end, [poly])) return [end];
+  if (!isLineObstructed(start, end, [poly], doorSegments, toleranceMeters)) return [end];
 
   const centroid = polygonCentroid(poly);
   const mid = [centroid[1], centroid[0]];
   if (
-    !isLineObstructed(start, mid, [poly]) &&
-    !isLineObstructed(mid, end, [poly])
+    !isLineObstructed(start, mid, [poly], doorSegments, toleranceMeters) &&
+    !isLineObstructed(mid, end, [poly], doorSegments, toleranceMeters)
   ) {
     return [mid, end];
   }
@@ -446,7 +576,7 @@ function adjustSegmentInsidePolygon(start, end, polygons) {
 }
 
 // Check if a direct line between two coordinates is obstructed by polygon walls
-function isLineObstructed(coord1, coord2, polygons) {
+function isLineObstructed(coord1, coord2, polygons, doorSegments = [], toleranceMeters = 0) {
   const p1 = [coord1[1], coord1[0]]; // Convert to [lng, lat]
   const p2 = [coord2[1], coord2[0]];
 
@@ -468,6 +598,9 @@ function isLineObstructed(coord1, coord2, polygons) {
       const p3 = vertices[i];
       const p4 = vertices[i + 1];
       if (segmentsIntersect(p1, p2, p3, p4)) {
+        if (isEdgePassable(p3, p4, doorSegments, toleranceMeters)) {
+          continue;
+        }
         return true;
       }
     }
@@ -514,7 +647,7 @@ function attachLandmarks(path, steps, pois) {
 }
 
 // Enhanced connection logic with PRIORITY for connection nodes
-function findValidNeighbors(nodeIndex, nodes, navigablePolygons) {
+function findValidNeighbors(nodeIndex, nodes, navigablePolygons, doorSegments = [], toleranceMeters = 0) {
   const currentNode = nodes[nodeIndex];
   const currentCoord = [currentNode[0], currentNode[1]]; // [lat, lng]
   const currentPolygon = getPolygonContaining(currentCoord, navigablePolygons);
@@ -555,7 +688,7 @@ function findValidNeighbors(nodeIndex, nodes, navigablePolygons) {
     // RULE 3: Cross-polygon connections through connection nodes
     else if (distance <= MAX_CROSS_POLYGON_DISTANCE) {
       // Check if line crosses any empty polygons (forbidden)
-      if (crossesEmptyPolygons(currentCoord, otherCoord, navigablePolygons, nodes)) {
+      if (crossesEmptyPolygons(currentCoord, otherCoord, navigablePolygons, nodes, doorSegments, toleranceMeters)) {
         isValid = false;
         connectionReason = 'blocked-by-empty-polygon';
       }
@@ -602,8 +735,8 @@ function findValidNeighbors(nodeIndex, nodes, navigablePolygons) {
       }
     }
     // RULE 4: Check if direct line is not obstructed (backup rule)
-    else if (!isLineObstructed(currentCoord, otherCoord, navigablePolygons) && 
-             !crossesEmptyPolygons(currentCoord, otherCoord, navigablePolygons, nodes)) {
+    else if (!isLineObstructed(currentCoord, otherCoord, navigablePolygons, doorSegments, toleranceMeters) &&
+             !crossesEmptyPolygons(currentCoord, otherCoord, navigablePolygons, nodes, doorSegments, toleranceMeters)) {
       // Long distance but unobstructed - only within same polygon
       if (currentPolygon && otherPolygon && currentPolygon === otherPolygon) {
         isValid = true;
@@ -625,7 +758,7 @@ function findValidNeighbors(nodeIndex, nodes, navigablePolygons) {
 }
 
 // Dijkstra's algorithm for finding shortest path
-function dijkstraShortestPath(nodes, startNodeIndex, endNodeIndex, navigablePolygons) {
+function dijkstraShortestPath(nodes, startNodeIndex, endNodeIndex, navigablePolygons, doorSegments = [], toleranceMeters = 0) {
   console.log(`Starting Enhanced Dijkstra with Connection Priority from node ${startNodeIndex} to ${endNodeIndex}`);
   console.log(`Start node: [${nodes[startNodeIndex][0]}, ${nodes[startNodeIndex][1]}] - ${nodes[startNodeIndex][2]?.name || nodes[startNodeIndex][2]?.nodeFunction}`);
   console.log(`End node: [${nodes[endNodeIndex][0]}, ${nodes[endNodeIndex][1]}] - ${nodes[endNodeIndex][2]?.name || nodes[endNodeIndex][2]?.nodeFunction}`);
@@ -637,7 +770,7 @@ function dijkstraShortestPath(nodes, startNodeIndex, endNodeIndex, navigablePoly
   const startType = nodes[startNodeIndex][2]?.nodeFunction;
   console.log(`Start node: area=${startArea}, type=${startType}`);
   
-  const startNeighbors = findValidNeighbors(startNodeIndex, nodes, navigablePolygons);
+  const startNeighbors = findValidNeighbors(startNodeIndex, nodes, navigablePolygons, doorSegments, toleranceMeters);
   console.log(`Start node has ${startNeighbors.length} neighbors with connection priority:`);
   
   // Sort neighbors by priority (connection nodes first)
@@ -699,7 +832,7 @@ function dijkstraShortestPath(nodes, startNodeIndex, endNodeIndex, navigablePoly
 
     unvisited.delete(currentIndex);
 
-    const neighbors = findValidNeighbors(currentIndex, nodes, navigablePolygons);
+    const neighbors = findValidNeighbors(currentIndex, nodes, navigablePolygons, doorSegments, toleranceMeters);
 
     for (const neighbor of neighbors) {
       if (!unvisited.has(neighbor.index)) continue;
@@ -746,7 +879,7 @@ function dijkstraShortestPath(nodes, startNodeIndex, endNodeIndex, navigablePoly
 }
 
 // A* algorithm using Euclidean heuristic
-function aStarShortestPath(nodes, startNodeIndex, endNodeIndex, navigablePolygons) {
+function aStarShortestPath(nodes, startNodeIndex, endNodeIndex, navigablePolygons, doorSegments = [], toleranceMeters = 0) {
   const heuristic = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
   const openSet = new Set([startNodeIndex]);
@@ -783,7 +916,7 @@ function aStarShortestPath(nodes, startNodeIndex, endNodeIndex, navigablePolygon
 
     openSet.delete(current);
 
-    const neighbors = findValidNeighbors(current, nodes, navigablePolygons);
+    const neighbors = findValidNeighbors(current, nodes, navigablePolygons, doorSegments, toleranceMeters);
     for (const neighbor of neighbors) {
       const tentativeG = gScore[current] + neighbor.weight;
       if (tentativeG < gScore[neighbor.index]) {
@@ -829,9 +962,16 @@ export function analyzeRoute(origin, destination, geoData, transportMode = 'walk
     return null;
   }
   
-  const doors = geoData.features.filter(
+  const doorPoints = geoData.features.filter(
     f =>
       f.geometry.type === 'Point' &&
+      f.properties?.nodeFunction === 'door' &&
+      serviceAllowed(f.properties?.services, transportMode) &&
+      genderAllowed(f.properties?.gender, gender)
+  );
+  const doorLines = geoData.features.filter(
+    f =>
+      (f.geometry.type === 'LineString' || f.geometry.type === 'MultiLineString') &&
       f.properties?.nodeFunction === 'door' &&
       serviceAllowed(f.properties?.services, transportMode) &&
       genderAllowed(f.properties?.gender, gender)
@@ -852,13 +992,19 @@ export function analyzeRoute(origin, destination, geoData, transportMode = 'walk
   // one door or connection node is considered traversable.
   const allPolygons = geoData.features.filter(f => f.geometry.type === 'Polygon');
 
+  const doorLineNodes = buildDoorLineNodes(doorLines);
+  const doorLineSegments = getDoorLineSegments(doorLines);
+
   // Create a unified list of all navigation nodes
   const allNodes = [];
 
   // Add all doors
-  doors.forEach(door => {
+  doorPoints.forEach(door => {
     const [lng, lat] = door.geometry.coordinates;
     allNodes.push([lat, lng, door.properties, 0, door]);
+  });
+  doorLineNodes.forEach(node => {
+    allNodes.push(node);
   });
 
   // Add all connections
@@ -1015,7 +1161,9 @@ export function analyzeRoute(origin, destination, geoData, transportMode = 'walk
     return routes;
   }
 
-  console.log(`Found ${doors.length} doors, ${connections.length} connections, ${navigablePolygons.length} navigable polygons`);
+  console.log(
+    `Found ${doorPoints.length} point doors, ${doorLines.length} line doors, ${connections.length} connections, ${navigablePolygons.length} navigable polygons`
+  );
 
   console.log(`Total nodes available: ${allNodes.length}`);
 
@@ -1043,8 +1191,17 @@ export function analyzeRoute(origin, destination, geoData, transportMode = 'walk
       const node = allNodes[i];
       const nodeCoord = [node[0], node[1]];
 
-      if (!isLineObstructed(coord, nodeCoord, navigablePolygons) &&
-          !crossesEmptyPolygons(coord, nodeCoord, navigablePolygons, allNodes)) {
+      if (
+        !isLineObstructed(coord, nodeCoord, navigablePolygons, doorLineSegments, DOOR_BOUNDARY_TOLERANCE_METERS) &&
+        !crossesEmptyPolygons(
+          coord,
+          nodeCoord,
+          navigablePolygons,
+          allNodes,
+          doorLineSegments,
+          DOOR_BOUNDARY_TOLERANCE_METERS
+        )
+      ) {
         const distance = Math.hypot(coord[0] - nodeCoord[0], coord[1] - nodeCoord[1]);
         const poly = getPolygonContaining(nodeCoord, navigablePolygons);
         const polyId = poly ? poly.properties?.subGroupValue : 'none';
@@ -1135,7 +1292,14 @@ export function analyzeRoute(origin, destination, geoData, transportMode = 'walk
   }
 
   // Use connection-priority A* to find the shortest path between entry points
-  const nodePath = aStarShortestPath(allNodes, startEntry.index, endEntry.index, navigablePolygons);
+  const nodePath = aStarShortestPath(
+    allNodes,
+    startEntry.index,
+    endEntry.index,
+    navigablePolygons,
+    doorLineSegments,
+    DOOR_BOUNDARY_TOLERANCE_METERS
+  );
   
   if (nodePath.length === 0 || nodePath.length === 1) {
     console.log('No valid path found between entry points');
@@ -1163,7 +1327,13 @@ export function analyzeRoute(origin, destination, geoData, transportMode = 'walk
     nodeList.forEach(node => {
       const coord = [node[0], node[1]];
       const prev = rPath[rPath.length - 1];
-      const seg = adjustSegmentInsidePolygon(prev, coord, navigablePolygons);
+      const seg = adjustSegmentInsidePolygon(
+        prev,
+        coord,
+        navigablePolygons,
+        doorLineSegments,
+        DOOR_BOUNDARY_TOLERANCE_METERS
+      );
       seg.forEach(p => rPath.push(p));
 
       if (node[2].nodeFunction === 'door') {
@@ -1184,7 +1354,13 @@ export function analyzeRoute(origin, destination, geoData, transportMode = 'walk
     });
 
     const last = rPath[rPath.length - 1];
-    const destSeg = adjustSegmentInsidePolygon(last, destination.coordinates, navigablePolygons);
+    const destSeg = adjustSegmentInsidePolygon(
+      last,
+      destination.coordinates,
+      navigablePolygons,
+      doorLineSegments,
+      DOOR_BOUNDARY_TOLERANCE_METERS
+    );
     destSeg.forEach(p => rPath.push(p));
     rSteps.push({
       coordinates: destination.coordinates,
@@ -1252,7 +1428,14 @@ export function analyzeRoute(origin, destination, geoData, transportMode = 'walk
     altStartEntries.forEach(s => {
       altEndEntries.forEach(e => {
         if (predefinedRoutes.length === 0 && s.index === startEntry.index && e.index === endEntry.index) return;
-        const altNodePath = aStarShortestPath(allNodes, s.index, e.index, navigablePolygons);
+        const altNodePath = aStarShortestPath(
+          allNodes,
+          s.index,
+          e.index,
+          navigablePolygons,
+          doorLineSegments,
+          DOOR_BOUNDARY_TOLERANCE_METERS
+        );
         if (altNodePath.length === 0 || altNodePath.length === 1) return;
         const route = buildRoute(altNodePath);
 
