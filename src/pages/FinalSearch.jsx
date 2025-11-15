@@ -6,7 +6,7 @@ import Map, { Marker, Source, Layer, Popup } from 'react-map-gl';
 import GeoJsonOverlay from '../components/map/GeoJsonOverlay';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import esriImageryStyle from '../services/esriImageryStyle';
+import useOfflineMapStyle from '../hooks/useOfflineMapStyle';
 import '../styles/FinalSearch.css';
 import ModeSelector from '../components/common/ModeSelector';
 import { useRouteStore } from '../store/routeStore';
@@ -23,6 +23,7 @@ const FinalSearch = () => {
   const navigate = useNavigate();
   const intl = useIntl();
   const formatDigits = useLocaleDigits();
+  const { mapStyle, handleMapError } = useOfflineMapStyle();
   const {
     origin: storedOrigin,
     destination: storedDestination,
@@ -559,7 +560,7 @@ const FinalSearch = () => {
         <Map
           ref={mapRef}
           mapLib={maplibregl}
-          mapStyle={esriImageryStyle}
+          mapStyle={mapStyle}
           style={{ width: '100%', height: '100%' }}
           initialViewState={{
             longitude:
@@ -572,6 +573,7 @@ const FinalSearch = () => {
           }}
           attributionControl={false}
           interactiveLayerIds={altLayerIds}
+          onError={handleMapError}
           onClick={(e) => {
             const feature = e.features && e.features[0];
             if (

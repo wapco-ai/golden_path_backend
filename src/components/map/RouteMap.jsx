@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import Map, { Marker, Source, Layer } from 'react-map-gl';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import esriImageryStyle from '../../services/esriImageryStyle';
+import useOfflineMapStyle from '../../hooks/useOfflineMapStyle';
 import GeoJsonOverlay from './GeoJsonOverlay';
 import advancedDeadReckoningService from '../../services/AdvancedDeadReckoningService';
 import ArrowMarker from './ArrowMarker';
@@ -38,6 +38,7 @@ const RouteMap = forwardRef(({
   const [heading, setHeading] = useState(0);
   const [terrainAvailable, setTerrainAvailable] = useState(false);
   const [geoData, setGeoData] = useState(null);
+  const { mapStyle, handleMapError } = useOfflineMapStyle();
   const language = useLangStore(state => state.language);
 
   useEffect(() => {
@@ -340,7 +341,7 @@ const RouteMap = forwardRef(({
     <Map
       ref={mapRef}
       mapLib={maplibregl}
-      mapStyle={esriImageryStyle}
+      mapStyle={mapStyle}
       interactiveLayerIds={altLayerIds}
       onClick={(e) => {
         const feature = e.features && e.features[0];
@@ -366,6 +367,7 @@ const RouteMap = forwardRef(({
       }}
       attributionControl={false}
       terrain={is3DView && terrainAvailable ? { source: 'terrain', exaggeration: 1.5 } : undefined}
+      onError={handleMapError}
     >
       {/* User location marker - now using ArrowMarker with walking man icon */}
       {!isDrActive && (

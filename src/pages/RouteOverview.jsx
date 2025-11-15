@@ -7,7 +7,7 @@ import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { groups, subGroups } from '../components/groupData';
 import '../styles/RouteOverview.css';
-import esriImageryStyle from '../services/esriImageryStyle';
+import useOfflineMapStyle from '../hooks/useOfflineMapStyle';
 import { useRouteStore } from '../store/routeStore';
 import useLocaleDigits from '../utils/useLocaleDigits';
 
@@ -51,6 +51,7 @@ const RouteOverview = () => {
 
   const { routeGeo, routeSteps } = useRouteStore();
   const routeCoordinates = routeGeo?.geometry?.coordinates || [];
+  const { mapStyle, handleMapError } = useOfflineMapStyle();
 
   const handleSubgroupClick = (subgroup) => {
     setSelectedSubgroup(subgroup);
@@ -400,10 +401,11 @@ const RouteOverview = () => {
         <Map
           ref={mapRef}
           mapLib={maplibregl}
-          mapStyle={esriImageryStyle}
+          mapStyle={mapStyle}
           initialViewState={viewState}
           attributionControl={false}
           style={{ width: '100%', height: '100%' }}
+          onError={handleMapError}
         >
           <Marker longitude={routeCoordinates[0]?.[0]} latitude={routeCoordinates[0]?.[1]} anchor="bottom">
             <div className="c-circle"></div>
