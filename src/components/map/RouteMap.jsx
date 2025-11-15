@@ -7,9 +7,9 @@ import useOfflineMapStyle from '../../hooks/useOfflineMapStyle';
 import GeoJsonOverlay from './GeoJsonOverlay';
 import advancedDeadReckoningService from '../../services/AdvancedDeadReckoningService';
 import ArrowMarker from './ArrowMarker';
-import { buildGeoJsonPath } from '../../utils/geojsonPath.js';
 import { useLangStore } from '../../store/langStore';
 import { subGroups } from '../groupData';
+import { loadGeoJsonData } from '../../utils/loadGeoJsonData.js';
 
 import { forwardRef, useImperativeHandle } from 'react';
 
@@ -99,11 +99,24 @@ const RouteMap = forwardRef(({
 
   // Load GeoJSON data
   useEffect(() => {
-    const file = buildGeoJsonPath(language);
-    fetch(file)
-      .then((res) => res.json())
-      .then(setGeoData)
-      .catch((err) => console.error('failed to load geojson', err));
+    let isMounted = true;
+    const controller = new AbortController();
+
+    loadGeoJsonData({ language, signal: controller.signal })
+      .then(data => {
+        if (isMounted) {
+          setGeoData(data);
+        }
+      })
+      .catch(err => {
+        if (err?.name === 'AbortError') return;
+        console.error('failed to load geojson for route map', err);
+      });
+
+    return () => {
+      isMounted = false;
+      controller.abort();
+    };
   }, [language]);
 
   // Function to render image markers for all subgroups with images

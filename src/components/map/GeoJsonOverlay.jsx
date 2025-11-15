@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Marker, Source, Layer } from 'react-map-gl';
 import { useLangStore } from '../../store/langStore';
-import { buildGeoJsonPath } from '../../utils/geojsonPath.js';
+import { loadGeoJsonData } from '../../utils/loadGeoJsonData.js';
 import { groups } from '../groupData';
 
 const groupColors = {
@@ -52,12 +52,24 @@ const GeoJsonOverlay = ({ selectedCategory, routeCoords = null }) => {
   const language = useLangStore((state) => state.language);
 
   useEffect(() => {
-    const file = buildGeoJsonPath(language);
+    let isMounted = true;
+    const controller = new AbortController();
 
-    fetch(file)
-      .then(res => res.json())
-      .then(data => setFeatures(data.features || []))
-      .catch(err => console.error('failed to load geojson', err));
+    loadGeoJsonData({ language, signal: controller.signal })
+      .then(data => {
+        if (isMounted) {
+          setFeatures(data?.features || []);
+        }
+      })
+      .catch(err => {
+        if (err?.name === 'AbortError') return;
+        console.error('unable to load geojson data for overlay', err);
+      });
+
+    return () => {
+      isMounted = false;
+      controller.abort();
+    };
   }, [language]);
 
   if (!features) return null;

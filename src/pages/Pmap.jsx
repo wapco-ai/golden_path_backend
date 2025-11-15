@@ -5,12 +5,12 @@ import Map, { Marker } from 'react-map-gl';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { useLangStore } from '../store/langStore';
-import { buildGeoJsonPath } from '../utils/geojsonPath.js';
 import { groups } from '../components/groupData';
 import { toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import '../styles/Pmap.css';
 import useOfflineMapStyle from '../hooks/useOfflineMapStyle';
+import { loadGeoJsonData } from '../utils/loadGeoJsonData.js';
 
 const groupColors = {
   sahn: '#4caf50',
@@ -83,14 +83,24 @@ const Pmap = () => {
 
   // Load geo data
   useEffect(() => {
-    const file = buildGeoJsonPath(language);
-    fetch(file)
-      .then((res) => res.json())
+    let isMounted = true;
+    const controller = new AbortController();
+
+    loadGeoJsonData({ language, signal: controller.signal })
       .then(data => {
+        if (!isMounted) return;
         setGeoData(data);
         console.log('GeoJSON loaded successfully:', data.features?.length, 'features');
       })
-      .catch((err) => console.error('failed to load geojson', err));
+      .catch(err => {
+        if (err?.name === 'AbortError') return;
+        console.error('failed to load geojson', err);
+      });
+
+    return () => {
+      isMounted = false;
+      controller.abort();
+    };
   }, [language]);
 
   // Filter search results

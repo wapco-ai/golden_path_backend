@@ -5,9 +5,9 @@ import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import useOfflineMapStyle from '../../hooks/useOfflineMapStyle';
 import { useLangStore } from '../../store/langStore';
-import { buildGeoJsonPath } from '../../utils/geojsonPath.js';
 import { groups } from '../groupData';
 import { getLocationTitleById } from '../../utils/getLocationTitle';
+import { loadGeoJsonData } from '../../utils/loadGeoJsonData.js';
 
 const groupColors = {
   sahn: '#4caf50',
@@ -258,11 +258,24 @@ const Mprc = ({
   };
 
   useEffect(() => {
-    const file = buildGeoJsonPath(language);
-    fetch(file)
-      .then((res) => res.json())
-      .then(setGeoData)
-      .catch((err) => console.error('failed to load geojson', err));
+    let isMounted = true;
+    const controller = new AbortController();
+
+    loadGeoJsonData({ language, signal: controller.signal })
+      .then(data => {
+        if (isMounted) {
+          setGeoData(data);
+        }
+      })
+      .catch(err => {
+        if (err?.name === 'AbortError') return;
+        console.error('failed to load geojson', err);
+      });
+
+    return () => {
+      isMounted = false;
+      controller.abort();
+    };
   }, [language]);
 
   useEffect(() => {

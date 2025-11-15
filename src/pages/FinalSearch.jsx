@@ -11,7 +11,7 @@ import '../styles/FinalSearch.css';
 import ModeSelector from '../components/common/ModeSelector';
 import { useRouteStore } from '../store/routeStore';
 import { useLangStore } from '../store/langStore';
-import { buildGeoJsonPath } from '../utils/geojsonPath.js';
+import { loadGeoJsonData } from '../utils/loadGeoJsonData.js';
 import { analyzeRoute } from '../utils/routeAnalysis';
 import useLocaleDigits from '../utils/useLocaleDigits';
 import { toast } from 'react-toastify';
@@ -185,12 +185,24 @@ const FinalSearch = () => {
   };
 
   useEffect(() => {
-    const file = buildGeoJsonPath(language);
+    let isMounted = true;
+    const controller = new AbortController();
 
-    fetch(file)
-      .then(res => res.json())
-      .then(setGeoData)
-      .catch(err => console.error('failed to load geojson', err));
+    loadGeoJsonData({ language, signal: controller.signal })
+      .then(data => {
+        if (isMounted) {
+          setGeoData(data);
+        }
+      })
+      .catch(err => {
+        if (err?.name === 'AbortError') return;
+        console.error('failed to load geojson', err);
+      });
+
+    return () => {
+      isMounted = false;
+      controller.abort();
+    };
   }, [language]);
 
   useEffect(() => {

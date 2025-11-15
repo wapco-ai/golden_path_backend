@@ -9,7 +9,7 @@ import { useRouteStore } from '../store/routeStore';
 import { useLangStore } from '../store/langStore';
 import { useSearchStore } from '../store/searchStore';
 import useLocaleDigits from '../utils/useLocaleDigits';
-import { buildGeoJsonPath } from '../utils/geojsonPath.js';
+import { loadGeoJsonData } from '../utils/loadGeoJsonData.js';
 import { toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import ttsService from '../services/ttsService';
@@ -570,11 +570,24 @@ const Location = () => {
 
   // Load geojson data
   useEffect(() => {
-    const file = buildGeoJsonPath(language);
-    fetch(file)
-      .then(res => res.json())
-      .then(setGeoData)
-      .catch(err => console.error('failed to load geojson', err));
+    let isMounted = true;
+    const controller = new AbortController();
+
+    loadGeoJsonData({ language, signal: controller.signal })
+      .then(data => {
+        if (isMounted) {
+          setGeoData(data);
+        }
+      })
+      .catch(err => {
+        if (err?.name === 'AbortError') return;
+        console.error('failed to load geojson', err);
+      });
+
+    return () => {
+      isMounted = false;
+      controller.abort();
+    };
   }, [language]);
 
   // In the Location component, modify the location data fetching to handle both cases
