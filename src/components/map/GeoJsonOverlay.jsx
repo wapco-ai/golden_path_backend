@@ -16,6 +16,18 @@ const groupColors = {
   other: '#757575'
 };
 
+const groupFillColors = {
+  sahn: '#c8e6c9',
+  eyvan: '#bbdefb',
+  ravaq: '#e1bee7',
+  masjed: '#ffe0b2',
+  madrese: '#c5cae9',
+  khadamat: '#cfd8dc',
+  elmi: '#b2ebf2',
+  cemetery: '#d7ccc8',
+  other: '#e0e0e0'
+};
+
 const getCompositeIcon = (group, nodeFunction, size = 35, opacity = 1) => {
   const color = groupColors[group] || '#999';
   let iconData =
@@ -68,6 +80,102 @@ const GeoJsonOverlay = ({ selectedCategory, routeCoords = null }) => {
   const polygonFeatures = features.filter(
     f => f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon'
   );
+  const lineFeatures = features.filter(f => {
+    const type = f.geometry.type;
+    return type === 'LineString' || type === 'MultiLineString';
+  });
+
+  const polygonFillPaint = {
+    'fill-color': [
+      'case',
+      ['has', 'group'],
+      [
+        'match',
+        ['get', 'group'],
+        'sahn', groupFillColors.sahn,
+        'eyvan', groupFillColors.eyvan,
+        'ravaq', groupFillColors.ravaq,
+        'masjed', groupFillColors.masjed,
+        'madrese', groupFillColors.madrese,
+        'khadamat', groupFillColors.khadamat,
+        'elmi', groupFillColors.elmi,
+        'cemetery', groupFillColors.cemetery,
+        groupFillColors.other
+      ],
+      groupFillColors.other
+    ],
+    'fill-opacity': 0.45,
+    'fill-outline-color': '#ffffff'
+  };
+
+  const polygonOutlinePaint = {
+    'line-color': [
+      'case',
+      ['has', 'group'],
+      [
+        'match',
+        ['get', 'group'],
+        'sahn', groupColors.sahn,
+        'eyvan', groupColors.eyvan,
+        'ravaq', groupColors.ravaq,
+        'masjed', groupColors.masjed,
+        'madrese', groupColors.madrese,
+        'khadamat', groupColors.khadamat,
+        'elmi', groupColors.elmi,
+        'cemetery', groupColors.cemetery,
+        groupColors.other
+      ],
+      groupColors.other
+    ],
+    'line-width': 2,
+    'line-opacity': 0.85
+  };
+
+  const linePaint = {
+    'line-color': [
+      'case',
+      ['has', 'group'],
+      [
+        'match',
+        ['get', 'group'],
+        'sahn', groupColors.sahn,
+        'eyvan', groupColors.eyvan,
+        'ravaq', groupColors.ravaq,
+        'masjed', groupColors.masjed,
+        'madrese', groupColors.madrese,
+        'khadamat', groupColors.khadamat,
+        'elmi', groupColors.elmi,
+        'cemetery', groupColors.cemetery,
+        groupColors.other
+      ],
+      groupColors.other
+    ],
+    'line-width': [
+      'interpolate',
+      ['linear'],
+      ['zoom'],
+      13, 1.5,
+      16, 3,
+      19, 6
+    ],
+    'line-opacity': 0.95,
+    'line-cap': 'round',
+    'line-join': 'round'
+  };
+
+  const lineGlowPaint = {
+    'line-color': 'rgba(255,255,255,0.65)',
+    'line-width': [
+      'interpolate',
+      ['linear'],
+      ['zoom'],
+      13, 2.5,
+      16, 5,
+      19, 9
+    ],
+    'line-opacity': 0.35,
+    'line-blur': 1.5
+  };
 
   return (
     <>
@@ -78,9 +186,32 @@ const GeoJsonOverlay = ({ selectedCategory, routeCoords = null }) => {
           data={{ type: 'FeatureCollection', features: polygonFeatures }}
         >
           <Layer
-            id="overlay-lines"
+            id="overlay-polygon-fill"
+            type="fill"
+            paint={polygonFillPaint}
+          />
+          <Layer
+            id="overlay-polygon-outline"
             type="line"
-            paint={{ 'line-color': '#333', 'line-width': 2 }}
+            paint={polygonOutlinePaint}
+          />
+        </Source>
+      )}
+      {lineFeatures.length > 0 && (
+        <Source
+          id="overlay-lines"
+          type="geojson"
+          data={{ type: 'FeatureCollection', features: lineFeatures }}
+        >
+          <Layer
+            id="overlay-line-glow"
+            type="line"
+            paint={lineGlowPaint}
+          />
+          <Layer
+            id="overlay-line-features"
+            type="line"
+            paint={linePaint}
           />
         </Source>
       )}
