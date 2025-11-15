@@ -7,7 +7,7 @@ import advancedDeadReckoningService from '../services/AdvancedDeadReckoningServi
 import '../styles/Routing.css';
 import { useRouteStore } from '../store/routeStore';
 import { useLangStore } from '../store/langStore';
-import { buildGeoJsonPath } from '../utils/geojsonPath.js';
+import { loadGeoJsonData } from '../utils/loadGeoJsonData.js';
 import { analyzeRoute } from '../utils/routeAnalysis';
 import useLocaleDigits from '../utils/useLocaleDigits';
 import { toast } from 'react-toastify';
@@ -226,20 +226,23 @@ const RoutingPage = () => {
       origin.coordinates?.[1] !== lng;
 
     if (!routeSteps.length || originChanged) {
-      const newOrigin = {
-        name: intl.formatMessage({ id: 'mapCurrentLocationName' }),
-        coordinates: [lat, lng]
-      };
-      const newDestination =
-        destination || {
-          name: intl.formatMessage({ id: 'destSahnEnqelabName' }),
-          coordinates: [36.2975, 59.6072]
-        };
+      const controller = new AbortController();
+      let isMounted = true;
 
-      const file = buildGeoJsonPath(language);
-      fetch(file)
-        .then((res) => res.json())
-        .then((geoData) => {
+      const rebuildRouteFromQr = async () => {
+        const newOrigin = {
+          name: intl.formatMessage({ id: 'mapCurrentLocationName' }),
+          coordinates: [lat, lng]
+        };
+        const newDestination =
+          destination || {
+            name: intl.formatMessage({ id: 'destSahnEnqelabName' }),
+            coordinates: [36.2975, 59.6072]
+          };
+
+        try {
+          const geoData = await loadGeoJsonData({ language, signal: controller.signal });
+          if (!isMounted) return;
           const result = analyzeRoute(
             newOrigin,
             newDestination,
@@ -261,8 +264,18 @@ const RoutingPage = () => {
           setRouteSteps(steps);
           setAlternativeRoutes(alternatives);
           sessionStorage.setItem('routeSahns', JSON.stringify(sahns));
-        })
-        .catch((err) => console.error('failed to build route from QR', err));
+        } catch (err) {
+          if (err?.name === 'AbortError') return;
+          console.error('failed to build route from QR', err);
+        }
+      };
+
+      rebuildRouteFromQr();
+
+      return () => {
+        isMounted = false;
+        controller.abort();
+      };
     }
   }, [storedLat, storedLng, origin, destination, routeSteps.length, language, intl, gender, setOrigin, setDestination, setRouteGeo, setRouteSteps, setAlternativeRoutes]);
 
@@ -276,10 +289,14 @@ const RoutingPage = () => {
 
     if (!origin || !destination) return;
     if (routeGeo && routeSteps.length) return;
-    const file = buildGeoJsonPath(language);
-    fetch(file)
-      .then(res => res.json())
-      .then(geoData => {
+
+    const controller = new AbortController();
+    let isMounted = true;
+
+    const rebuildRoute = async () => {
+      try {
+        const geoData = await loadGeoJsonData({ language, signal: controller.signal });
+        if (!isMounted) return;
         const result = analyzeRoute(
           origin,
           destination,
@@ -299,8 +316,18 @@ const RoutingPage = () => {
         setRouteSteps(steps);
         setAlternativeRoutes(alternatives);
         sessionStorage.setItem('routeSahns', JSON.stringify(sahns));
-      })
-      .catch(err => console.error('failed to rebuild route', err));
+      } catch (err) {
+        if (err?.name === 'AbortError') return;
+        console.error('failed to rebuild route', err);
+      }
+    };
+
+    rebuildRoute();
+
+    return () => {
+      isMounted = false;
+      controller.abort();
+    };
   }, [transportMode, gender, origin, destination, language, intl, routeGeo, routeSteps.length, setRouteGeo, setRouteSteps, setAlternativeRoutes]);
 
   // Calculate total time in minutes from all steps
