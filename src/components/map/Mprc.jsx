@@ -23,8 +23,12 @@ const groupColors = {
   other: '#757575'
 };
 
+const nodeFunctionColors = {
+  door: '#e53935'
+};
+
 const getCompositeIcon = (group, nodeFunction, size = 35, opacity = 1) => {
-  const color = groupColors[group] || '#999';
+  const color = nodeFunctionColors[nodeFunction] || groupColors[group] || '#999';
   let iconData =
     groups.find((g) => g.value === group) ||
     groups.find((g) => g.value === nodeFunction) ||
