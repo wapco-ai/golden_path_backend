@@ -6,6 +6,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import esriImageryStyle from '../../services/esriImageryStyle';
 import { useLangStore } from '../../store/langStore';
 import { buildGeoJsonPath } from '../../utils/geojsonPath.js';
+import { fetchMapGeojson } from '../../services/geojsonService.js';
 import { groups, subGroups } from '../groupData';
 import { getLocationTitleById } from '../../utils/getLocationTitle';
 
@@ -247,11 +248,47 @@ const Mpbc = ({
   };
 
   useEffect(() => {
-    const file = buildGeoJsonPath(language);
-    fetch(file)
-      .then((res) => res.json())
-      .then(setGeoData)
-      .catch((err) => console.error('failed to load geojson', err));
+    let isMounted = true;
+    const controller = new AbortController();
+
+    const loadGeojson = async () => {
+      try {
+        const data = await fetchMapGeojson({ language, floor: 0, signal: controller.signal });
+        if (isMounted) {
+          setGeoData(data);
+          return;
+        }
+      } catch (err) {
+        if (err?.name === 'AbortError') {
+          return;
+        }
+        console.error('failed to load geojson from api service', err);
+      }
+
+      const file = buildGeoJsonPath(language);
+      try {
+        const response = await fetch(file, { signal: controller.signal });
+        if (!response.ok) {
+          throw new Error(`GeoJSON fallback failed with status ${response.status}`);
+        }
+        const data = await response.json();
+        if (isMounted) {
+          setGeoData(data);
+        }
+      } catch (fallbackErr) {
+        if (fallbackErr?.name === 'AbortError') {
+          return;
+        }
+        console.error('failed to load geojson fallback', fallbackErr);
+      }
+    };
+
+    loadGeojson();
+
+    return () => {
+      isMounted = false;
+      controller.abort();
+    };
   }, [language]);
 
   useEffect(() => {
