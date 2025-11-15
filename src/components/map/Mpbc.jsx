@@ -332,26 +332,63 @@ const Mpbc = ({
     }
   }, [userCoords, destCoords, geoData]);
 
-  // Filter point features - only show icon markers when a category is selected
+  const getDoorMarkerCoordinates = (geometry) => {
+    if (!geometry) return null;
+
+    if (geometry.type === 'Point') {
+      return geometry.coordinates;
+    }
+
+    if (geometry.type === 'LineString' && geometry.coordinates?.length) {
+      const midpointIndex = Math.floor(geometry.coordinates.length / 2);
+      return geometry.coordinates[midpointIndex];
+    }
+
+    if (geometry.type === 'MultiLineString' && geometry.coordinates?.length) {
+      const firstLine = geometry.coordinates.find(line => Array.isArray(line) && line.length);
+      if (!firstLine) return null;
+      const midpointIndex = Math.floor(firstLine.length / 2);
+      return firstLine[midpointIndex];
+    }
+
+    return null;
+  };
+
   const pointFeatures = geoData
-    ? geoData.features.filter(f => {
-      if (f.geometry.type !== 'Point') return false;
+    ? geoData.features.reduce((acc, feature) => {
+      const { properties = {}, geometry } = feature;
+      const { group, subGroupValue, nodeFunction } = properties;
+      const isDoor = nodeFunction === 'door';
 
-      const { group, subGroupValue } = f.properties || {};
-      const subgroup = subGroups[group]?.find(sg => sg.value === subGroupValue);
-      const hasImage = subgroup && subgroup.img;
+      const coordinates = isDoor
+        ? getDoorMarkerCoordinates(geometry)
+        : geometry?.type === 'Point'
+          ? geometry.coordinates
+          : null;
 
-      // If no category is selected, don't show any icon markers (only image markers)
-      if (!selectedCategory) return false;
+      if (!coordinates) return acc;
 
-      // If a category is selected, only show features from that category
-      if (selectedCategory && group !== selectedCategory.value) return false;
+      if (!isDoor) {
+        const subgroup = subGroups[group]?.find(sg => sg.value === subGroupValue);
+        const hasImage = subgroup && subgroup.img;
 
-      // Don't show features that have images (they're handled separately)
-      if (hasImage) return false;
+        // If no category is selected, don't show any icon markers (only image markers)
+        if (!selectedCategory) return acc;
 
-      return true;
-    })
+        // If a category is selected, only show features from that category
+        if (selectedCategory && group !== selectedCategory.value) return acc;
+
+        // Don't show features that have images (they're handled separately)
+        if (hasImage) return acc;
+      }
+
+      acc.push({
+        ...feature,
+        geometry: { type: 'Point', coordinates }
+      });
+
+      return acc;
+    }, [])
     : [];
 
   const polygonFeatures = geoData
