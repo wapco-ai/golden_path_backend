@@ -332,39 +332,19 @@ const Mpbc = ({
     }
   }, [userCoords, destCoords, geoData]);
 
-  const getDoorMarkerCoordinates = (geometry) => {
-    if (!geometry) return null;
-
-    if (geometry.type === 'Point') {
-      return geometry.coordinates;
-    }
-
-    if (geometry.type === 'LineString' && geometry.coordinates?.length) {
-      const midpointIndex = Math.floor(geometry.coordinates.length / 2);
-      return geometry.coordinates[midpointIndex];
-    }
-
-    if (geometry.type === 'MultiLineString' && geometry.coordinates?.length) {
-      const firstLine = geometry.coordinates.find(line => Array.isArray(line) && line.length);
-      if (!firstLine) return null;
-      const midpointIndex = Math.floor(firstLine.length / 2);
-      return firstLine[midpointIndex];
-    }
-
-    return null;
-  };
-
   const pointFeatures = geoData
     ? geoData.features.reduce((acc, feature) => {
       const { properties = {}, geometry } = feature;
       const { group, subGroupValue, nodeFunction } = properties;
       const isDoor = nodeFunction === 'door';
+      const isDoorLine = isDoor && geometry?.type &&
+        (geometry.type === 'LineString' || geometry.type === 'MultiLineString');
 
-      const coordinates = isDoor
-        ? getDoorMarkerCoordinates(geometry)
-        : geometry?.type === 'Point'
-          ? geometry.coordinates
-          : null;
+      if (isDoorLine) return acc;
+
+      const coordinates = geometry?.type === 'Point'
+        ? geometry.coordinates
+        : null;
 
       if (!coordinates) return acc;
 
@@ -389,6 +369,14 @@ const Mpbc = ({
 
       return acc;
     }, [])
+    : [];
+
+  const doorLineFeatures = geoData
+    ? geoData.features.filter(feature => {
+      const isDoor = feature.properties?.nodeFunction === 'door';
+      const type = feature.geometry?.type;
+      return isDoor && (type === 'LineString' || type === 'MultiLineString');
+    })
     : [];
 
   const polygonFeatures = geoData
@@ -520,6 +508,26 @@ const Mpbc = ({
       {polygonFeatures.length > 0 && (
         <Source id="polygons" type="geojson" data={{ type: 'FeatureCollection', features: polygonFeatures }}>
           <Layer id="polygon-lines" type="line" paint={{ 'line-color': '#333', 'line-width': 2 }} />
+        </Source>
+      )}
+
+      {/* Door lines */}
+      {doorLineFeatures.length > 0 && (
+        <Source
+          id="door-lines"
+          type="geojson"
+          data={{ type: 'FeatureCollection', features: doorLineFeatures }}
+        >
+          <Layer
+            id="door-lines-layer"
+            type="line"
+            paint={{
+              'line-color': nodeFunctionColors.door,
+              'line-width': 3,
+              'line-cap': 'round',
+              'line-join': 'round'
+            }}
+          />
         </Source>
       )}
 
