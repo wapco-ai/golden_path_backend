@@ -25,7 +25,7 @@ const MapBeginPage = () => {
     }
     : {
       name: intl.formatMessage({ id: 'defaultBabRezaName' }),
-      coordinates: [36.2880, 59.6157] 
+      coordinates: [36.2880, 59.6157]
     };
   const [userLocation, setUserLocation] = useState(initialUserLocation);
   const [isTracking, setIsTracking] = useState(true);
@@ -46,6 +46,9 @@ const MapBeginPage = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [dragStartHeight, setDragStartHeight] = useState(0);
   const [dragStartY, setDragStartY] = useState(0);
+  const [velocity, setVelocity] = useState(0);
+  const [lastTouchY, setLastTouchY] = useState(0);
+  const [lastTouchTime, setLastTouchTime] = useState(0);
   const [currentHeight, setCurrentHeight] = useState(140);
   const [isAutoExpanding, setIsAutoExpanding] = useState(false);
   const [preventMapCentering, setPreventMapCentering] = useState(false);
@@ -257,25 +260,46 @@ const MapBeginPage = () => {
     }
   }, [storedId, storedLat, storedLng, language]);
 
-  // Add these touch event handlers
   const handleTouchStart = (e) => {
+    const touchY = e.touches[0].clientY;
     setIsDragging(true);
-    setDragStartY(e.touches[0].clientY);
+    setDragStartY(touchY);
     setDragStartHeight(currentHeight);
-    setIsSwiping(true);
+    setLastTouchY(touchY);
+    setLastTouchTime(Date.now());
+    setVelocity(0);
   };
 
   const handleTouchMove = (e) => {
     if (!isDragging) return;
 
     const touchY = e.touches[0].clientY;
-    const deltaY = dragStartY - touchY; // Positive when moving up
+    const currentTime = Date.now();
+    const deltaTime = currentTime - lastTouchTime;
+
+    if (deltaTime > 0) {
+      const deltaY = lastTouchY - touchY;
+      const newVelocity = deltaY / deltaTime;
+      setVelocity(newVelocity);
+    }
+
+    const deltaY = dragStartY - touchY;
     const newHeight = dragStartHeight + deltaY;
 
-    // Limit height between minimum (140px) and maximum (100vh)
-    const clampedHeight = Math.max(140, Math.min(newHeight, window.innerHeight));
+    let resistance = 1;
+    if (newHeight < 140) {
+      resistance = 0.3 + (0.7 * (newHeight / 140));
+    } else if (newHeight > window.innerHeight) {
+      resistance = 0.3 + (0.7 * (window.innerHeight / newHeight));
+    }
+
+    const clampedHeight = Math.max(80, Math.min(newHeight * resistance, window.innerHeight * 1.1));
     setCurrentHeight(clampedHeight);
+
+    setLastTouchY(touchY);
+    setLastTouchTime(currentTime);
   };
+
 
   useEffect(() => {
     const handleResize = () => {
@@ -291,29 +315,55 @@ const MapBeginPage = () => {
   const handleTouchEnd = () => {
     if (!isDragging) return;
     setIsDragging(false);
-    setIsSwiping(false);
 
     const screenHeight = window.innerHeight;
+    const snapThreshold = 50;
+    const velocityThreshold = 0.5; 
 
-    // If dragged very close to bottom (less than 150px), close completely
-    if (currentHeight < 150) {
-      setCurrentHeight(140);
+    let targetHeight;
+
+    if (Math.abs(velocity) > velocityThreshold) {
+
+      if (velocity > 0) {
+
+        targetHeight = window.innerHeight;
+      } else {
+
+        if (currentHeight < screenHeight * 0.3) {
+          targetHeight = 140;
+        } else {
+          targetHeight = window.innerHeight * 0.41;
+        }
+      }
+    } else {
+      // No significant velocity - use position-based snapping
+      if (currentHeight < 140 + snapThreshold) {
+        targetHeight = 140;
+      } else if (currentHeight < screenHeight * 0.35) {
+        targetHeight = window.innerHeight * 0.41;
+      } else if (currentHeight < screenHeight * 0.7) {
+        targetHeight = window.innerHeight * 0.41;
+      } else {
+        targetHeight = screenHeight;
+      }
+    }
+
+    // Smooth animation to target height
+    setCurrentHeight(targetHeight);
+
+    // Update UI state based on final height
+    if (targetHeight <= 140) {
       setShowRouting(false);
       setExpandedSearch(false);
-      // DON'T reset showLocationDetails - keep the cultural info
-    }
-    // If dragged to middle area, snap to location details height (41vh)
-    else if (currentHeight < screenHeight * 0.7) {
-      setCurrentHeight(window.innerHeight * 0.41);
+    } else if (targetHeight <= screenHeight * 0.41) {
       setExpandedSearch(false);
       setShowRouting(true);
-    }
-    // Otherwise, expand fully
-    else {
-      setCurrentHeight(screenHeight);
+    } else {
       setExpandedSearch(true);
       setShowRouting(true);
     }
+
+    setVelocity(0);
   };
 
   useEffect(() => {
