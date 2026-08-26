@@ -1,0 +1,43 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Support\Facades\DB;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        DB::statement(<<<SQL
+            CREATE OR REPLACE FUNCTION public.trg_set_updated_at()
+            RETURNS trigger AS $$
+            BEGIN
+              NEW.updated_at = now();
+              RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+        SQL);
+        DB::statement(<<<SQL
+            DO $$
+            BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'pages_set_updated_at') THEN
+                CREATE TRIGGER pages_set_updated_at
+                BEFORE UPDATE ON public.pages
+                FOR EACH ROW EXECUTE FUNCTION public.trg_set_updated_at();
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'page_faqs_set_updated_at') THEN
+                CREATE TRIGGER page_faqs_set_updated_at
+                BEFORE UPDATE ON public.page_faqs
+                FOR EACH ROW EXECUTE FUNCTION public.trg_set_updated_at();
+              END IF;
+            END $$;
+        SQL);
+    }
+
+    public function down(): void
+    {
+        DB::statement("DROP TRIGGER IF EXISTS pages_set_updated_at ON public.pages;");
+        DB::statement("DROP TRIGGER IF EXISTS page_faqs_set_updated_at ON public.page_faqs;");
+        // keep function (harmless shared)
+    }
+};

@@ -1,0 +1,76 @@
+# ------------------------------------------------------------
+# Secrets / local environment
+# ------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+src/.env
+src/.env.*
+!src/.env.example
+
+# ------------------------------------------------------------
+# PHP / Laravel dependencies
+# ------------------------------------------------------------
+src/vendor/
+src/node_modules/
+
+# ------------------------------------------------------------
+# Laravel runtime
+# ------------------------------------------------------------
+src/storage/logs/
+src/storage/pail/
+src/storage/framework/cache/
+src/storage/framework/sessions/
+src/storage/framework/views/
+src/storage/*.key
+
+# Runtime uploaded/media data
+src/docker-data/
+src/storage/app/private/uploads/
+src/storage/app/private/guidance-points/
+src/storage/app/private/storage/
+
+# ------------------------------------------------------------
+# Database / runtime state
+# ------------------------------------------------------------
+docker-data/
+
+# SQLite is not the GoldenPath routing database
+src/database/database.sqlite
+
+# ------------------------------------------------------------
+# Large external assets
+# ------------------------------------------------------------
+fonts/
+src/public/fonts/
+
+# ------------------------------------------------------------
+# Generated Laravel/Vite assets
+# ------------------------------------------------------------
+src/public/build/
+src/public/hot
+src/public/storage
+
+# ------------------------------------------------------------
+# Local archives / temporary files
+# ------------------------------------------------------------
+src/laravel12_backend.zip
+*.Zone.Identifier
+*Zone.Identifier
+
+# ------------------------------------------------------------
+# Editors / OS
+# ------------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.fleet/
+.zed/
+
+# ------------------------------------------------------------
+# Test/cache artifacts
+# ------------------------------------------------------------
+src/.phpunit.result.cache
+src/.phpunit.cache/

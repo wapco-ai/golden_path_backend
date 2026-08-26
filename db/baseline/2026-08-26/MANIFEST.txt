@@ -1,0 +1,16 @@
+GoldenPath Database Baseline
+Date: 2026-08-26
+Database: golden_path
+PostgreSQL: 16.4
+PostGIS image: postgis/postgis:16-3.4
+
+Object counts:
+Tables: 60
+Functions: 93
+Views: 10
+Materialized Views: 1
+Types: 13
+Indexes: 121
+
+SHA256:
+91032c3235b74a7a46adcd5ba09e6628e1ac19df4d5b28b0cf70c11b7846049d  golden_path.schema.sql

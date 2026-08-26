@@ -1,0 +1,105 @@
+openapi: 3.0.3
+info:
+  title: GoldenPath Guidance Points API
+  version: 1.1.0
+  description: |
+    Independent visual guidance points used in route instructions. These records are not tied to routes by FK.
+    They store photographed points inside/near areas, with up to 4 directional images per point.
+servers:
+  - url: /api/v1
+paths:
+  /admin/guidance-points:
+    get:
+      tags: [Admin Guidance Points]
+      summary: List independent guidance points.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: floor, in: query, schema: { type: integer, enum: [-1, 0] } }
+        - { name: area_id, in: query, schema: { type: integer }, description: Optional logical area tag; no FK. }
+        - { name: is_active, in: query, schema: { type: boolean } }
+        - { name: search, in: query, schema: { type: string } }
+        - { name: near_x, in: query, schema: { type: number }, description: EPSG:32640 x coordinate. }
+        - { name: near_y, in: query, schema: { type: number }, description: EPSG:32640 y coordinate. }
+        - { name: radius_m, in: query, schema: { type: number, default: 30 } }
+        - { name: sort, in: query, schema: { type: string, example: sort_order:asc } }
+        - { name: limit, in: query, schema: { type: integer, default: 25, maximum: 100 } }
+      responses:
+        '200': { description: Paginated list. }
+    post:
+      tags: [Admin Guidance Points]
+      summary: Create a guidance point with up to 4 images.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/GuidancePointInput'
+      responses:
+        '201': { description: Created. }
+        '422': { description: Validation error. }
+  /admin/guidance-points/{id}:
+    get:
+      tags: [Admin Guidance Points]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+      responses:
+        '200': { description: One guidance point. }
+        '404': { description: Not found. }
+    patch:
+      tags: [Admin Guidance Points]
+      summary: Update metadata; sending images replaces all previous images atomically.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/GuidancePointInput'
+      responses:
+        '200': { description: Updated. }
+        '422': { description: Validation error. }
+    delete:
+      tags: [Admin Guidance Points]
+      summary: Soft delete the point; physical image cleanup is not done here to preserve audit/debug ability.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+      responses:
+        '200': { description: Deleted. }
+  /guidance-points:
+    get:
+      tags: [Public Guidance Points]
+      summary: Read active guidance points by floor, area, or near a route coordinate.
+      parameters:
+        - { name: floor, in: query, schema: { type: integer, enum: [-1, 0] } }
+        - { name: area_id, in: query, schema: { type: integer } }
+        - { name: near_x, in: query, schema: { type: number }, description: EPSG:32640 x coordinate. }
+        - { name: near_y, in: query, schema: { type: number }, description: EPSG:32640 y coordinate. }
+        - { name: radius_m, in: query, schema: { type: number, default: 30 } }
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 100 } }
+      responses:
+        '200': { description: Active independent guidance points. }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    GuidancePointInput:
+      type: object
+      required: [floor, x, y]
+      properties:
+        floor: { type: integer, enum: [-1, 0] }
+        area_id: { type: integer, nullable: true, description: Optional logical area tag; no FK. }
+        title: { type: string, nullable: true, maxLength: 160 }
+        description: { type: string, nullable: true }
+        x: { type: number, description: EPSG:32640 x coordinate. }
+        y: { type: number, description: EPSG:32640 y coordinate. }
+        view_direction: { type: string, nullable: true, example: north }
+        azimuth_deg: { type: number, nullable: true, minimum: 0, exclusiveMaximum: 360 }
+        coverage_radius_m: { type: number, default: 10, minimum: 0.1, maximum: 100 }
+        sort_order: { type: integer, default: 0 }
+        primary_image_url: { type: string, nullable: true, format: uri }
+        is_active: { type: boolean, default: true }
+        images:
+          type: array
+          maxItems: 4
+          items: { type: string, format: binary }

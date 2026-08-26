@@ -1,0 +1,11 @@
+{
+  "options": {
+    "paths": {
+      "root": "/data",
+      "fonts": "/data/fonts",
+      "styles": "/data/styles"
+    },
+    "serveAllFonts": true
+  },
+  "styles": {}
+}

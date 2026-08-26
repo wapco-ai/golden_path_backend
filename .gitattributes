@@ -1,0 +1,26 @@
+# GoldenPath repository line-ending policy
+# Linux/Docker/PHP/PostgreSQL source is stored as LF in Git.
+
+* text=auto eol=lf
+
+# Windows-native scripts, if added later.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Explicit binary types.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.zip binary
+*.gz binary
+*.dump binary
+*.mbtiles binary
+db/baseline/** -whitespace
