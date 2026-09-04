@@ -25,15 +25,16 @@ class GuidancePointsPublicController extends Controller
             $q->where('gp.area_id', (int) $request->query('area_id'));
         }
         if ($request->filled(['near_x', 'near_y'])) {
+            // Public API uses WGS84 longitude/latitude; convert to EPSG:32640 for
+            // metric PostGIS distance operations.
+            $lng = (float) $request->query('near_x');
+            $lat = (float) $request->query('near_y');
             $radius = max(0.1, min((float) $request->query('radius_m', 30), 200));
-            $q->whereRaw('ST_DWithin(gp.geom, ST_SetSRID(ST_MakePoint(?, ?), 32640), ?)', [
-                (float) $request->query('near_x'),
-                (float) $request->query('near_y'),
-                $radius,
-            ])->selectRaw('ST_Distance(gp.geom, ST_SetSRID(ST_MakePoint(?, ?), 32640)) AS distance_m', [
-                (float) $request->query('near_x'),
-                (float) $request->query('near_y'),
-            ])->orderBy('distance_m');
+            $pointSql = 'ST_Transform(ST_SetSRID(ST_MakePoint(?, ?), 4326), 32640)';
+
+            $q->whereRaw("ST_DWithin(gp.geom, {$pointSql}, ?)", [$lng, $lat, $radius])
+                ->selectRaw("ST_Distance(gp.geom, {$pointSql}) AS distance_m", [$lng, $lat])
+                ->orderBy('distance_m');
         } else {
             $q->orderBy('gp.floor')->orderBy('gp.area_id')->orderBy('gp.sort_order');
         }

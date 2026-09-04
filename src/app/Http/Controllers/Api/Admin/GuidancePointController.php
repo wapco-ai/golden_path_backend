@@ -75,76 +75,79 @@ class GuidancePointController extends Controller
         }
 
         $stored = [];
+        $id = null;
+
+        DB::beginTransaction();
 
         try {
-            // اول فقط خود guidance_points ساخته می‌شود تا id داشته باشیم
-            $id = DB::transaction(function () use ($data, $request) {
-                $userId = optional($request->user())->id;
+            $userId = optional($request->user())->id;
 
-                $row = DB::selectOne(
-                    "INSERT INTO guidance_points
+            $row = DB::selectOne(
+                "INSERT INTO guidance_points
                     (floor, area_id, title, description, x, y, view_direction, azimuth_deg, coverage_radius_m, sort_order, primary_image_url, is_active, created_by, updated_by, geom, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 10.00), COALESCE(?, 0), ?, COALESCE(?, true), ?, ?, ST_Transform(ST_SetSRID(ST_MakePoint(?, ?), 4326), 32640), now(), now())
                  RETURNING id",
-                    [
-                        (int) $data['floor'],
-                        $data['area_id'] ?? null,
-                        $data['title'] ?? null,
-                        $data['description'] ?? null,
-                        (float) $data['x'],
-                        (float) $data['y'],
-                        $data['view_direction'] ?? null,
-                        $data['azimuth_deg'] ?? null,
-                        $data['coverage_radius_m'] ?? 10.00,
-                        $data['sort_order'] ?? 0,
-                        $data['primary_image_url'] ?? null,
-                        array_key_exists('is_active', $data) ? (bool) $data['is_active'] : true,
-                        $userId,
-                        $userId,
-                        (float) $data['x'],
-                        (float) $data['y'],
-                    ]
-                );
+                [
+                    (int) $data['floor'],
+                    $data['area_id'] ?? null,
+                    $data['title'] ?? null,
+                    $data['description'] ?? null,
+                    (float) $data['x'],
+                    (float) $data['y'],
+                    $data['view_direction'] ?? null,
+                    $data['azimuth_deg'] ?? null,
+                    $data['coverage_radius_m'] ?? 10.00,
+                    $data['sort_order'] ?? 0,
+                    $data['primary_image_url'] ?? null,
+                    array_key_exists('is_active', $data) ? (bool) $data['is_active'] : true,
+                    $userId,
+                    $userId,
+                    (float) $data['x'],
+                    (float) $data['y'],
+                ]
+            );
 
-                $id = (int) $row->id;
+            $id = (int) $row->id;
 
-                $this->logAdmin($request, 'create', $id, [
-                    'floor' => (int) $data['floor'],
-                    'area_id' => $data['area_id'] ?? null,
-                ]);
-
-                return $id;
-            });
-
-            // بعد از اینکه id داریم، فایل دقیقاً در مسیر نهایی ذخیره می‌شود
+            // Keep database and filesystem creation logically atomic: if storage or DB
+            // persistence fails, the DB transaction is rolled back and stored files are removed.
             $stored = $this->images->storeMany($files, $id, $meta);
 
             if ($stored) {
-                DB::transaction(function () use ($id, $stored) {
-                    $this->insertImages($id, $stored);
+                $this->insertImages($id, $stored);
 
-                    DB::table('guidance_points')
-                        ->where('id', $id)
-                        ->whereNull('deleted_at')
-                        ->update([
-                            'primary_image_url' => $stored[0]['image_url'] ?? null,
-                            'updated_at' => now(),
-                        ]);
-                });
+                DB::table('guidance_points')
+                    ->where('id', $id)
+                    ->whereNull('deleted_at')
+                    ->update([
+                        'primary_image_url' => $stored[0]['image_url'] ?? null,
+                        'updated_at' => now(),
+                    ]);
             }
 
-            $response = $this->show($id);
-            $payload = $response->getData(true);
-            $payload['id'] = $id;
-            $response->setData($payload);
+            $this->logAdmin($request, 'create', $id, [
+                'floor' => (int) $data['floor'],
+                'area_id' => $data['area_id'] ?? null,
+                'image_count' => count($stored),
+            ]);
 
-            return $response->setStatusCode(201);
+            DB::commit();
         } catch (Throwable $e) {
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
             $this->images->deleteKeys(array_column($stored, 'image_key'));
             report($e);
 
             return $this->error('Internal server error.', 500);
         }
+
+        $response = $this->show((int) $id);
+        $payload = $response->getData(true);
+        $payload['id'] = (int) $id;
+        $response->setData($payload);
+
+        return $response->setStatusCode(201);
     }
 
     public function update(Request $request, int $id): JsonResponse
@@ -163,72 +166,149 @@ class GuidancePointController extends Controller
             return $this->validationError($validator->errors()->toArray());
         }
 
-        $meta = $this->imageMeta($request);
-
         $data = $validator->validated();
         $files = $this->imageFiles($request);
+        $meta = $this->imageMeta($request);
         $hasNewImages = count($files) > 0;
+
         if (($err = $this->validateImageCount($files)) !== null) {
             return $err;
         }
 
+        $existingRows = DB::table('guidance_point_images')
+            ->where('point_id', $id)
+            ->orderBy('sort_order')
+            ->get(['id', 'image_key']);
+
+        $existingIds = $existingRows
+            ->pluck('id')
+            ->map(fn($value) => (int) $value)
+            ->all();
+
+        $hasRetainedImageList = $request->has('existing_image_ids');
+        $retainedIds = array_values(array_unique(array_map(
+            'intval',
+            (array) $request->input('existing_image_ids', [])
+        )));
+
+        if ($hasRetainedImageList) {
+            $foreignIds = array_values(array_diff($retainedIds, $existingIds));
+            if ($foreignIds) {
+                return $this->error(
+                    'One or more retained images do not belong to this guidance point.',
+                    422,
+                    ['existing_image_ids' => ['Invalid guidance point image ownership.']]
+                );
+            }
+        } elseif (!$hasNewImages) {
+            // Metadata-only update: keep all current images when the client did not
+            // explicitly submit a retained-image list.
+            $retainedIds = $existingIds;
+        }
+
+        $retainedCount = count($retainedIds);
+        if ($retainedCount + count($files) > GuidancePointImageService::MAX_IMAGES) {
+            return $this->error(
+                'A guidance point can have at most 4 images.',
+                422,
+                ['images' => ['A guidance point can have at most 4 images.']]
+            );
+        }
+
         $stored = [];
         $oldKeys = [];
+        $imageSetChanged = $hasNewImages || $hasRetainedImageList;
+
         try {
             if ($hasNewImages) {
-                $existingCount = DB::table('guidance_point_images')
-                    ->where('point_id', $id)
-                    ->count();
-
-                if ($existingCount + count($files) > GuidancePointImageService::MAX_IMAGES) {
-                    return $this->error(
-                        'A guidance point can have at most 4 images.',
-                        422,
-                        ['images' => ['A guidance point can have at most 4 images.']]
-                    );
-                }
-
-                $stored = $this->images->storeMany($files, $id, $meta, $existingCount);
+                $stored = $this->images->storeMany($files, $id, $meta, $retainedCount);
             }
 
-            DB::transaction(function () use ($id, $current, $data, $request, $hasNewImages, $stored) {
+            DB::transaction(function () use (
+                $id,
+                $data,
+                $request,
+                $stored,
+                $hasNewImages,
+                $imageSetChanged,
+                $retainedIds,
+                &$oldKeys
+            ) {
+                if ($imageSetChanged) {
+                    $deleteQuery = DB::table('guidance_point_images')
+                        ->where('point_id', $id);
+
+                    if ($retainedIds) {
+                        $deleteQuery->whereNotIn('id', $retainedIds);
+                    }
+
+                    $oldKeys = $deleteQuery
+                        ->pluck('image_key')
+                        ->filter()
+                        ->map(fn($value) => (string) $value)
+                        ->all();
+
+                    $deleteQuery->delete();
+
+                    if ($retainedIds) {
+                        // Move retained rows out of the unique sort-order range first,
+                        // then write the client order back as 1..N.
+                        DB::table('guidance_point_images')
+                            ->where('point_id', $id)
+                            ->whereIn('id', $retainedIds)
+                            ->update([
+                                'sort_order' => DB::raw('sort_order + 100'),
+                                'updated_at' => now(),
+                            ]);
+
+                        foreach ($retainedIds as $index => $imageId) {
+                            DB::table('guidance_point_images')
+                                ->where('point_id', $id)
+                                ->where('id', $imageId)
+                                ->update([
+                                    'sort_order' => $index + 1,
+                                    'updated_at' => now(),
+                                ]);
+                        }
+                    }
+                }
+
                 $sets = ['updated_at = now()', 'updated_by = ?'];
                 $bind = [optional($request->user())->id];
 
                 foreach (['floor', 'area_id', 'title', 'description', 'view_direction', 'azimuth_deg', 'coverage_radius_m', 'sort_order', 'is_active'] as $field) {
                     if (array_key_exists($field, $data)) {
                         $sets[] = $field . ' = ?';
-                        $bind[] = in_array($field, ['floor', 'area_id', 'sort_order'], true) && $data[$field] !== null ? (int) $data[$field] : $data[$field];
+                        $bind[] = in_array($field, ['floor', 'area_id', 'sort_order'], true) && $data[$field] !== null
+                            ? (int) $data[$field]
+                            : $data[$field];
                     }
                 }
 
                 $hasLocation = $request->filled('x') && $request->filled('y');
-
                 if ($hasLocation) {
                     $lng = (float) $data['x'];
                     $lat = (float) $data['y'];
 
                     $sets[] = 'x = ?';
                     $bind[] = $lng;
-
                     $sets[] = 'y = ?';
                     $bind[] = $lat;
-
                     $sets[] = 'geom = ST_Transform(ST_SetSRID(ST_MakePoint(?, ?), 4326), 32640)';
                     $bind[] = $lng;
                     $bind[] = $lat;
                 }
 
-                if ($hasNewImages && empty($current->primary_image_url)) {
-                    $sets[] = 'primary_image_url = ?';
-                    $bind[] = $stored[0]['image_url'] ?? null;
-                } elseif (array_key_exists('primary_image_url', $data)) {
+                if (array_key_exists('primary_image_url', $data) && !$imageSetChanged) {
                     $sets[] = 'primary_image_url = ?';
                     $bind[] = $data['primary_image_url'];
                 }
 
                 $bind[] = $id;
-                DB::update('UPDATE guidance_points SET ' . implode(', ', $sets) . ' WHERE id = ? AND deleted_at IS NULL', $bind);
+                DB::update(
+                    'UPDATE guidance_points SET ' . implode(', ', $sets) . ' WHERE id = ? AND deleted_at IS NULL',
+                    $bind
+                );
 
                 if ($hasNewImages) {
                     $this->insertImages($id, $stored);
@@ -236,13 +316,36 @@ class GuidancePointController extends Controller
 
                 $this->updateExistingImageMeta($request, $id);
 
-                $this->logAdmin($request, 'update', $id, ['replace_images' => $hasNewImages]);
+                if ($imageSetChanged) {
+                    $nextImageUrl = DB::table('guidance_point_images')
+                        ->where('point_id', $id)
+                        ->orderBy('sort_order')
+                        ->value('image_url');
+
+                    DB::table('guidance_points')
+                        ->where('id', $id)
+                        ->whereNull('deleted_at')
+                        ->update([
+                            'primary_image_url' => $nextImageUrl,
+                            'updated_at' => now(),
+                        ]);
+                }
+
+                $this->logAdmin($request, 'update', $id, [
+                    'image_set_changed' => $imageSetChanged,
+                    'retained_image_count' => count($retainedIds),
+                    'new_image_count' => count($stored),
+                ]);
             });
+
+            // Delete replaced files only after the database transaction succeeds.
+            $this->images->deleteKeys($oldKeys);
 
             return $this->show($id);
         } catch (Throwable $e) {
             $this->images->deleteKeys(array_column($stored, 'image_key'));
             report($e);
+
             return $this->error('Internal server error.', 500);
         }
     }
@@ -284,15 +387,37 @@ class GuidancePointController extends Controller
             return $this->error('Guidance point not found.', 404);
         }
 
-        DB::transaction(function () use ($request, $id) {
-            DB::table('guidance_points')->where('id', $id)->whereNull('deleted_at')->update([
-                'deleted_at' => now(),
-                'updated_at' => now(),
-                'updated_by' => optional($request->user())->id,
-                'is_active' => false,
+        $imageKeys = [];
+
+        DB::transaction(function () use ($request, $id, &$imageKeys) {
+            $imageKeys = DB::table('guidance_point_images')
+                ->where('point_id', $id)
+                ->pluck('image_key')
+                ->filter()
+                ->map(fn($value) => (string) $value)
+                ->all();
+
+            DB::table('guidance_point_images')
+                ->where('point_id', $id)
+                ->delete();
+
+            DB::table('guidance_points')
+                ->where('id', $id)
+                ->whereNull('deleted_at')
+                ->update([
+                    'deleted_at' => now(),
+                    'updated_at' => now(),
+                    'updated_by' => optional($request->user())->id,
+                    'is_active' => false,
+                    'primary_image_url' => null,
+                ]);
+
+            $this->logAdmin($request, 'delete', $id, [
+                'deleted_image_count' => count($imageKeys),
             ]);
-            $this->logAdmin($request, 'delete', $id, []);
         });
+
+        $this->images->deleteKeys($imageKeys);
 
         return response()->json(['success' => true, 'message' => 'Guidance point deleted.']);
     }
@@ -305,8 +430,8 @@ class GuidancePointController extends Controller
             'area_id' => ['sometimes', 'nullable', 'integer', 'min:1'],
             'title' => ['sometimes', 'nullable', 'string', 'max:160'],
             'description' => ['sometimes', 'nullable', 'string', 'max:5000'],
-            'x' => [$isUpdate ? 'sometimes' : 'required', 'numeric'],
-            'y' => [$isUpdate ? 'sometimes' : 'required', 'numeric'],
+            'x' => [$isUpdate ? 'sometimes' : 'required', 'numeric', 'between:-180,180'],
+            'y' => [$isUpdate ? 'sometimes' : 'required', 'numeric', 'between:-90,90'],
             'view_direction' => ['sometimes', 'nullable', 'string', 'max:40'],
             'azimuth_deg' => ['sometimes', 'nullable', 'numeric', 'gte:0', 'lt:360'],
             'coverage_radius_m' => ['sometimes', 'numeric', 'gt:0', 'lte:100'],
@@ -383,16 +508,15 @@ class GuidancePointController extends Controller
             $q->where(fn($qq) => $qq->where('gp.title', 'ILIKE', $needle)->orWhere('gp.description', 'ILIKE', $needle));
         }
         if ($request->filled(['near_x', 'near_y'])) {
+            // API x/y are consistently WGS84 longitude/latitude. Convert to the
+            // canonical routing/data SRID (EPSG:32640) before metric distance checks.
+            $lng = (float) $request->query('near_x');
+            $lat = (float) $request->query('near_y');
             $radius = max(0.1, min((float) $request->query('radius_m', 30), 200));
-            $q->whereRaw('ST_DWithin(gp.geom, ST_SetSRID(ST_MakePoint(?, ?), 32640), ?)', [
-                (float) $request->query('near_x'),
-                (float) $request->query('near_y'),
-                $radius,
-            ]);
-            $q->selectRaw('ST_Distance(gp.geom, ST_SetSRID(ST_MakePoint(?, ?), 32640)) AS distance_m', [
-                (float) $request->query('near_x'),
-                (float) $request->query('near_y'),
-            ]);
+            $pointSql = 'ST_Transform(ST_SetSRID(ST_MakePoint(?, ?), 4326), 32640)';
+
+            $q->whereRaw("ST_DWithin(gp.geom, {$pointSql}, ?)", [$lng, $lat, $radius]);
+            $q->selectRaw("ST_Distance(gp.geom, {$pointSql}) AS distance_m", [$lng, $lat]);
         }
     }
 
