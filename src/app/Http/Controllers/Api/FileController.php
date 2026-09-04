@@ -3,14 +3,24 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Middleware\AdminAuth;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Routing\Controllers\HasMiddleware;
+use Illuminate\Routing\Controllers\Middleware;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
-class FileController extends Controller
+class FileController extends Controller implements HasMiddleware
 {
+    public static function middleware(): array
+    {
+        return [
+            new Middleware(AdminAuth::class, only: ['upload', 'delete']),
+        ];
+    }
+
     /**
      * POST /api/v1/files
      * multipart/form-data:
@@ -229,14 +239,18 @@ class FileController extends Controller
         });
 
         if (!$fileDeleted && !$dbDeleted) {
+            // DELETE is intentionally idempotent. The guidance-point update endpoint
+            // may already remove a replaced image row/file atomically before the
+            // legacy frontend performs its follow-up cleanup request.
             return response()->json([
-                'success' => false,
+                'success' => true,
                 'deleted' => false,
                 'file_deleted' => false,
                 'db_deleted' => false,
                 'path' => $path,
-                'message' => 'File and database image row not found',
-            ], 404);
+                'point_id' => null,
+                'message' => 'File already absent.',
+            ]);
         }
 
         return response()->json([
