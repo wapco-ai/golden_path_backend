@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: fix/guidance-coverage-radius
-      - name: Apply reviewed coverage-only edits to exact source
+      - name: Apply reviewed coverage-only controller edits
         shell: bash
         run: |
           set -euo pipefail
@@ -30,9 +30,6 @@ jobs:
               'src/app/Http/Controllers/Api/LandmarkController.php': ('a92d6f1ff21474b2d8facab7f825431e1d22a917', [
                   ('COALESCE(gp.coverage_radius_m, 10)', 'COALESCE(gp.coverage_radius_m, 100)'),
               ]),
-              '.github/workflows/ci.yml': ('05c805ff731278238a7253ec9f72db08ce8216ab', [
-                  ('vendor/bin/phpunit tests/Feature/GuidanceImageSourceTest.php', "vendor/bin/phpunit tests/Feature --filter='Guidance(ImageSource|Coverage)Test'"),
-              ]),
           }
           for path, (expected, replacements) in edits.items():
               assert subprocess.check_output(['git','hash-object',path],text=True).strip() == expected, path
@@ -48,6 +45,6 @@ jobs:
           php -l src/tests/Feature/GuidanceCoverageTest.php
           php -l src/database/migrations/2026_09_08_180000_set_guidance_coverage_default_to_100.php
           git rm .github/workflows/apply-coverage-once.yml
-          git add src/app/Http/Controllers/Api/Admin/GuidancePointController.php src/app/Http/Controllers/Api/LandmarkController.php .github/workflows/ci.yml
+          git add src/app/Http/Controllers/Api/Admin/GuidancePointController.php src/app/Http/Controllers/Api/LandmarkController.php
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'fix: align API and selection coverage defaults with 100 metres'
           git push origin HEAD:refs/heads/fix/guidance-coverage-radius
