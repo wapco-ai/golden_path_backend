@@ -85,7 +85,7 @@ class GuidancePointController extends Controller
             $row = DB::selectOne(
                 "INSERT INTO guidance_points
                     (floor, area_id, title, description, x, y, view_direction, azimuth_deg, coverage_radius_m, sort_order, primary_image_url, is_active, created_by, updated_by, geom, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 10.00), COALESCE(?, 0), ?, COALESCE(?, true), ?, ?, ST_Transform(ST_SetSRID(ST_MakePoint(?, ?), 4326), 32640), now(), now())
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 100.00), COALESCE(?, 0), ?, COALESCE(?, true), ?, ?, ST_Transform(ST_SetSRID(ST_MakePoint(?, ?), 4326), 32640), now(), now())
                  RETURNING id",
                 [
                     (int) $data['floor'],
@@ -96,7 +96,7 @@ class GuidancePointController extends Controller
                     (float) $data['y'],
                     $data['view_direction'] ?? null,
                     $data['azimuth_deg'] ?? null,
-                    $data['coverage_radius_m'] ?? 10.00,
+                    $data['coverage_radius_m'] ?? 100.00,
                     $data['sort_order'] ?? 0,
                     $data['primary_image_url'] ?? null,
                     array_key_exists('is_active', $data) ? (bool) $data['is_active'] : true,
@@ -434,7 +434,7 @@ class GuidancePointController extends Controller
             'y' => [$isUpdate ? 'sometimes' : 'required', 'numeric', 'between:-90,90'],
             'view_direction' => ['sometimes', 'nullable', 'string', 'max:40'],
             'azimuth_deg' => ['sometimes', 'nullable', 'numeric', 'gte:0', 'lt:360'],
-            'coverage_radius_m' => ['sometimes', 'numeric', 'gt:0', 'lte:100'],
+            'coverage_radius_m' => ['sometimes', 'required', 'numeric', 'min:0.01', 'lte:100', 'decimal:0,2'],
             'sort_order' => ['sometimes', 'integer', 'min:0'],
             'primary_image_url' => ['sometimes', 'nullable', 'url', 'max:2048'],
             'is_active' => ['sometimes', 'boolean'],

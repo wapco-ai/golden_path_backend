@@ -70,5 +70,5 @@ jobs:
             -type f -name '*.php' -print0 \
             | xargs -0 -n1 php -l
 
-      - name: Guidance source contract tests (mocked DB, no database server)
-        run: vendor/bin/phpunit tests/Feature/GuidanceImageSourceTest.php
+      - name: Guidance source and coverage contract tests (mocked DB, no database server)
+        run: vendor/bin/phpunit tests/Feature --filter='Guidance(ImageSource|Coverage)Test'
