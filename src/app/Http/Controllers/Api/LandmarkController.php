@@ -224,7 +224,7 @@ class LandmarkController extends Controller
             ->whereNull('gp.deleted_at')
             ->whereNotNull('gp.geom')
             ->whereRaw(
-                "ST_DWithin(gp.geom, {$pointSql}, LEAST(?::double precision, COALESCE(gp.coverage_radius_m, 10)::double precision))",
+                "ST_DWithin(gp.geom, {$pointSql}, LEAST(?::double precision, COALESCE(gp.coverage_radius_m, 100)::double precision))",
                 [$lng, $lat, $maxDistance]
             )
             ->select([
