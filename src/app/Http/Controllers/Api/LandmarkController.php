@@ -92,15 +92,17 @@ class LandmarkController extends Controller
      *  - floor : smallint (optional)
      *  - fov : float (optional, default 90)
      *  - max_distance : float (optional, default 80 meters)
+     *  - source : auto (default) | guidance_points (requires floor; no POI fallback)
      */
     public function viewImage(Request $request)
     {
         $data = $request->validate([
             'language'        => 'nullable|string|in:fa,en,ar,ur',
-            'geo.lat'         => 'required|numeric',
-            'geo.lng'         => 'required|numeric',
+            'geo.lat'         => 'required|numeric|between:-90,90',
+            'geo.lng'         => 'required|numeric|between:-180,180',
             'heading'         => 'required|numeric',
-            'floor'           => 'nullable|integer',
+            'floor'           => 'required_if:source,guidance_points|nullable|integer|min:-32768|max:32767',
+            'source'          => 'sometimes|string|in:auto,guidance_points',
             'fov'             => 'nullable|numeric|min:1|max:180',
             'max_distance'    => 'nullable|numeric|min:1|max:1000',
         ]);
@@ -110,7 +112,8 @@ class LandmarkController extends Controller
         $lng          = data_get($data, 'geo.lng');
         $heading      = $data['heading'];
 
-        $floor        = array_key_exists('floor', $data) ? (int)$data['floor'] : null;
+        $floor        = isset($data['floor']) ? (int) $data['floor'] : null;
+        $imageSource  = $data['source'] ?? 'auto';
         $fov          = $data['fov'] ?? 90;
         $maxDistance  = $data['max_distance'] ?? 80;
 
@@ -132,7 +135,24 @@ class LandmarkController extends Controller
                 $guidancePayload['language'] = $language;
                 $guidancePayload['generatedAt'] = now()->toIso8601String();
 
-                return response()->json($guidancePayload);
+                return response()->json($guidancePayload)->header('Cache-Control', 'no-store');
+            }
+
+            // RNG opts in explicitly. No POI fallback when a nearby guidance image
+            // does not satisfy floor, coverage and heading; other consumers keep auto.
+            if ($imageSource === 'guidance_points') {
+                return response()->json([
+                    'status' => 'NO_MATCH',
+                    'source' => 'guidance_points',
+                    'guidance_point_id' => null,
+                    'poi_id' => null,
+                    'image' => null,
+                    'floor' => $floor,
+                    'heading' => fmod(fmod((float) $heading, 360.0) + 360.0, 360.0),
+                    'reason' => 'NO_GUIDANCE_IMAGE_MATCH',
+                    'language' => $language,
+                    'generatedAt' => now()->toIso8601String(),
+                ])->header('Cache-Control', 'no-store');
             }
 
             // Fallback keeps existing cultural/POI landmark behavior unchanged when no
