@@ -11,6 +11,13 @@ use Tests\TestCase;
 // Every DB operation is mocked. No migrations, database server or test DB needed.
 class GuidanceImageSourceTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config(['guidance.local_north_offset_deg' => 30.0]);
+    }
+
     private function candidates(array $rows): void
     {
         $query = Mockery::mock(Builder::class);
@@ -27,7 +34,7 @@ class GuidanceImageSourceTest extends TestCase
     {
         return '/api/v1/landmark-view-image?' . http_build_query(array_replace([
             'geo' => ['lat' => 36.287841848029, 'lng' => 59.614226482676],
-            'heading' => 270, 'floor' => 0, 'fov' => 45, 'source' => 'guidance_points',
+            'heading' => 300, 'floor' => 0, 'fov' => 45, 'source' => 'guidance_points',
         ], $extra));
     }
 
@@ -55,7 +62,24 @@ class GuidanceImageSourceTest extends TestCase
             ->assertJsonPath('source', 'guidance_points')
             ->assertJsonPath('guidance_point_id', 13)
             ->assertJsonPath('image.id', 15)
+            ->assertJsonPath('image.azimuth_deg', 270)
+            ->assertJsonPath('heading', 300)
             ->assertJsonPath('poi_id', null);
+    }
+
+    public function test_local_north_offset_can_be_overridden_without_rewriting_image_azimuth(): void
+    {
+        config(['guidance.local_north_offset_deg' => 0.0]);
+        $this->candidates([$this->westImage()]);
+        DB::shouldReceive('selectOne')->never();
+        $disk = Mockery::mock();
+        $disk->shouldReceive('url')->once()->andReturn('/storage/test.jpg');
+        Storage::shouldReceive('disk')->with('public')->once()->andReturn($disk);
+
+        $this->getJson($this->url(['heading' => 270]))->assertOk()
+            ->assertJsonPath('guidance_point_id', 13)
+            ->assertJsonPath('image.azimuth_deg', 270)
+            ->assertJsonPath('heading', 270);
     }
 
     public function test_guidance_only_never_falls_back_to_poi(): void
