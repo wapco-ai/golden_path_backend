@@ -9,6 +9,22 @@ and `reason=NO_GUIDANCE_IMAGE_MATCH`. It never calls the POI fallback in this mo
 The default `source=auto` keeps the previous guidance-first / POI-fallback behavior.
 Coverage radius, image azimuth and FOV restrictions are unchanged.
 
+## Local north for guidance images
+
+Guidance image orientations/azimuths are authored against one shrine-wide local north.
+Route `heading` remains in the normal map/route north frame. Before comparing the route
+heading with a guidance image, the backend rotates only the comparison heading into the
+local frame using `GUIDANCE_LOCAL_NORTH_OFFSET_DEG`.
+
+The default is `30` degrees clockwise: local north is 30 degrees east of route north.
+With that default, a local-west image (`azimuth_deg=270`) matches a route heading of
+`300` degrees. Stored image azimuths and the `heading` returned by the API are not rewritten.
+Set the environment value to the surveyed shrine offset if it changes; negative values and
+values outside 0..360 are normalized by the matching calculation.
+
+This setting affects guidance-image selection only. It does not rotate coordinates, alter
+route geometry, generate route steps, or modify any graph object.
+
 This is an application-code-only update. No new migration, SQL, graph rebuild,
 Composer dependency update or change to historical db/baseline is required.
 Deploy backend before the matching frontend. The frontend rejects a source-unaware

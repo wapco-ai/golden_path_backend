@@ -216,6 +216,12 @@ class LandmarkController extends Controller
             $normalizedHeading += 360.0;
         }
 
+        // Route heading stays in the map/true-north frame. Guidance image azimuths
+        // are authored in the shrine-wide local-north frame, so only the comparison
+        // heading is rotated into that local frame. Routing geometry is untouched.
+        $localNorthOffset = (float) config('guidance.local_north_offset_deg', 30.0);
+        $localHeading = fmod(fmod($normalizedHeading - $localNorthOffset, 360.0) + 360.0, 360.0);
+
         $pointSql = 'ST_Transform(ST_SetSRID(ST_MakePoint(?, ?), 4326), 32640)';
 
         $query = DB::table('guidance_points as gp')
@@ -297,7 +303,7 @@ class LandmarkController extends Controller
                 $imageAzimuth += 360.0;
             }
 
-            $rawDiff = abs($imageAzimuth - $normalizedHeading);
+            $rawDiff = abs($imageAzimuth - $localHeading);
             $angleDiff = min($rawDiff, 360.0 - $rawDiff);
 
             $imageFov = $candidate->fov_deg !== null ? (float) $candidate->fov_deg : 60.0;
