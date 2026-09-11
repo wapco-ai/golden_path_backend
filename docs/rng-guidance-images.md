@@ -11,16 +11,17 @@ Coverage radius, image azimuth and FOV restrictions are unchanged.
 
 ## Local north for guidance images
 
-Guidance image orientations/azimuths are authored against one shrine-wide local north.
+Guidance image orientations/azimuths may be authored against one shrine-wide local north.
 Route `heading` remains in the normal map/route north frame. Before comparing the route
-heading with a guidance image, the backend rotates only the comparison heading into the
+heading with a guidance image, the backend can rotate only the comparison heading into the
 local frame using `GUIDANCE_LOCAL_NORTH_OFFSET_DEG`.
 
-The default is `30` degrees clockwise: local north is 30 degrees east of route north.
-With that default, a local-west image (`azimuth_deg=270`) matches a route heading of
-`300` degrees. Stored image azimuths and the `heading` returned by the API are not rewritten.
-Set the environment value to the surveyed shrine offset if it changes; negative values and
-values outside 0..360 are normalized by the matching calculation.
+The safe default is `0`, which preserves the existing image-matching behavior. Set a non-zero
+value only after the shrine-wide offset has been measured. Positive values mean local north is
+clockwise/east of route north. For example, with an offset of `10`, a local-west image
+(`azimuth_deg=270`) matches a route heading of `280` degrees. Stored image azimuths and the
+`heading` returned by the API are not rewritten. Negative values and values outside 0..360 are
+normalized by the matching calculation.
 
 This setting affects guidance-image selection only. It does not rotate coordinates, alter
 route geometry, generate route steps, or modify any graph object.
