@@ -15,7 +15,7 @@ class GuidanceImageSourceTest extends TestCase
     {
         parent::setUp();
 
-        config(['guidance.local_north_offset_deg' => 30.0]);
+        config(['guidance.local_north_offset_deg' => 0.0]);
     }
 
     private function candidates(array $rows): void
@@ -34,7 +34,7 @@ class GuidanceImageSourceTest extends TestCase
     {
         return '/api/v1/landmark-view-image?' . http_build_query(array_replace([
             'geo' => ['lat' => 36.287841848029, 'lng' => 59.614226482676],
-            'heading' => 300, 'floor' => 0, 'fov' => 45, 'source' => 'guidance_points',
+            'heading' => 270, 'floor' => 0, 'fov' => 45, 'source' => 'guidance_points',
         ], $extra));
     }
 
@@ -63,23 +63,23 @@ class GuidanceImageSourceTest extends TestCase
             ->assertJsonPath('guidance_point_id', 13)
             ->assertJsonPath('image.id', 15)
             ->assertJsonPath('image.azimuth_deg', 270)
-            ->assertJsonPath('heading', 300)
+            ->assertJsonPath('heading', 270)
             ->assertJsonPath('poi_id', null);
     }
 
-    public function test_local_north_offset_can_be_overridden_without_rewriting_image_azimuth(): void
+    public function test_local_north_offset_can_be_enabled_without_rewriting_image_azimuth(): void
     {
-        config(['guidance.local_north_offset_deg' => 0.0]);
+        config(['guidance.local_north_offset_deg' => 30.0]);
         $this->candidates([$this->westImage()]);
         DB::shouldReceive('selectOne')->never();
         $disk = Mockery::mock();
         $disk->shouldReceive('url')->once()->andReturn('/storage/test.jpg');
         Storage::shouldReceive('disk')->with('public')->once()->andReturn($disk);
 
-        $this->getJson($this->url(['heading' => 270]))->assertOk()
+        $this->getJson($this->url(['heading' => 300]))->assertOk()
             ->assertJsonPath('guidance_point_id', 13)
             ->assertJsonPath('image.azimuth_deg', 270)
-            ->assertJsonPath('heading', 270);
+            ->assertJsonPath('heading', 300);
     }
 
     public function test_guidance_only_never_falls_back_to_poi(): void
