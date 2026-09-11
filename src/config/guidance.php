@@ -12,6 +12,9 @@ return [
     | from route north. This offset is used only while matching guidance images;
     | it must not affect routing geometry, route steps, or graph generation.
     |
+    | Keep the safe default at 0 so existing image matching remains unchanged
+    | until the shrine-wide local-north offset is surveyed and explicitly set.
+    |
     */
-    'local_north_offset_deg' => (float) env('GUIDANCE_LOCAL_NORTH_OFFSET_DEG', 30.0),
+    'local_north_offset_deg' => (float) env('GUIDANCE_LOCAL_NORTH_OFFSET_DEG', 0.0),
 ];
