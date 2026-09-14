@@ -118,7 +118,9 @@ class GuidanceCoverageTest extends TestCase
     public function test_selector_preserves_per_point_radius_and_uses_100_only_for_null(): void
     {
         $query = Mockery::mock(Builder::class);
-        foreach (['join', 'where', 'whereNull', 'whereNotNull', 'select', 'selectRaw', 'orderBy', 'limit'] as $name) $query->shouldReceive($name)->andReturnSelf();
+        foreach (['where', 'whereNull', 'whereNotNull', 'select', 'selectRaw', 'orderBy', 'limit'] as $name) {
+            $query->shouldReceive($name)->andReturnSelf();
+        }
         $query->shouldReceive('whereRaw')->once()->withArgs(function ($sql, $bindings) {
             $this->assertStringContainsString('LEAST(?::double precision, COALESCE(gp.coverage_radius_m, 100)::double precision)', $sql);
             $this->assertSame(250.0, $bindings[2]);
@@ -126,10 +128,15 @@ class GuidanceCoverageTest extends TestCase
         })->andReturnSelf();
         $query->shouldReceive('get')->once()->andReturn(collect([]));
         DB::shouldReceive('table')->with('guidance_points as gp')->once()->andReturn($query);
+        DB::shouldReceive('table')->with('guidance_point_images as gpi')->never();
         DB::shouldReceive('selectOne')->never();
+
         $this->getJson('/api/v1/landmark-view-image?' . http_build_query([
-            'geo' => ['lat' => 36.286, 'lng' => 59.612], 'heading' => 90,
-            'floor' => 0, 'max_distance' => 250, 'source' => 'guidance_points',
+            'geo' => ['lat' => 36.286, 'lng' => 59.612],
+            'heading' => 90,
+            'floor' => 0,
+            'max_distance' => 250,
+            'source' => 'guidance_points',
         ]))->assertOk()->assertJsonPath('status', 'NO_MATCH');
     }
 

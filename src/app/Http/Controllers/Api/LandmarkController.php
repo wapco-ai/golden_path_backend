@@ -40,7 +40,6 @@ class LandmarkController extends Controller
         $search = $data['search'] ?? null;
         $featured = (bool)($data['featured'] ?? false);
 
-
         try {
             $row = DB::selectOne(
                 // 👇 امضای جدید فانکشن: ۶ پارامتر
@@ -118,10 +117,8 @@ class LandmarkController extends Controller
         $maxDistance  = $data['max_distance'] ?? 80;
 
         try {
-            // Guidance points are the first-class visual navigation source. They are
-            // intentionally independent from route geometry: routing/steps still come
-            // from routing_edges_static / door_access_points, while this endpoint only
-            // selects the best nearby image for the current route heading.
+            // Guidance points are visual navigation aids only. Route geometry and
+            // route steps remain sourced from routing_edges_static / door_access_points.
             $guidancePayload = $this->findGuidanceViewImage(
                 (float) $lat,
                 (float) $lng,
@@ -138,8 +135,8 @@ class LandmarkController extends Controller
                 return response()->json($guidancePayload)->header('Cache-Control', 'no-store');
             }
 
-            // RNG opts in explicitly. No POI fallback when a nearby guidance image
-            // does not satisfy floor, coverage and heading; other consumers keep auto.
+            // RNG opts in explicitly. No POI fallback when no guidance point in the
+            // requested floor/distance/FOV has a usable directional image.
             if ($imageSource === 'guidance_points') {
                 return response()->json([
                     'status' => 'NO_MATCH',
@@ -148,7 +145,7 @@ class LandmarkController extends Controller
                     'poi_id' => null,
                     'image' => null,
                     'floor' => $floor,
-                    'heading' => fmod(fmod((float) $heading, 360.0) + 360.0, 360.0),
+                    'heading' => $this->normalizeAzimuth((float) $heading),
                     'reason' => 'NO_GUIDANCE_IMAGE_MATCH',
                     'language' => $language,
                     'generatedAt' => now()->toIso8601String(),
@@ -175,7 +172,7 @@ class LandmarkController extends Controller
             }
 
             $payload['language']    = $payload['language']    ?? $language;
-            $payload['generatedAt'] = now()->toIso8601String();
+            $payload['generatedAt'] = $payload['generatedAt'] ?? now()->toIso8601String();
 
             // ✅ Fix image.url based on current environment (APP_URL/filesystems config)
             if (is_array($payload) && isset($payload['image']) && is_array($payload['image'])) {
@@ -203,6 +200,7 @@ class LandmarkController extends Controller
             ], 500);
         }
     }
+
     private function findGuidanceViewImage(
         float $lat,
         float $lng,
@@ -211,21 +209,14 @@ class LandmarkController extends Controller
         float $requestFov,
         float $maxDistance
     ): ?array {
-        $normalizedHeading = fmod($heading, 360.0);
-        if ($normalizedHeading < 0) {
-            $normalizedHeading += 360.0;
-        }
-
-        // Route heading stays in the map/true-north frame. Guidance image azimuths
-        // are authored in the shrine-wide local-north frame, so only the comparison
-        // heading is rotated into that local frame. Routing geometry is untouched.
+        $normalizedHeading = $this->normalizeAzimuth($heading);
         $localNorthOffset = (float) config('guidance.local_north_offset_deg', 30.0);
-        $localHeading = fmod(fmod($normalizedHeading - $localNorthOffset, 360.0) + 360.0, 360.0);
-
         $pointSql = 'ST_Transform(ST_SetSRID(ST_MakePoint(?, ?), 4326), 32640)';
 
+        // Stage 1: select guidance POINTS only. Request max_distance, per-point
+        // coverage radius, floor and request FOV decide which points are eligible.
+        // Image orientation and local-north correction deliberately do not participate.
         $query = DB::table('guidance_points as gp')
-            ->join('guidance_point_images as gpi', 'gpi.point_id', '=', 'gp.id')
             ->where('gp.is_active', true)
             ->whereNull('gp.deleted_at')
             ->whereNotNull('gp.geom')
@@ -242,15 +233,6 @@ class LandmarkController extends Controller
                 'gp.azimuth_deg as point_azimuth_deg',
                 'gp.coverage_radius_m',
                 'gp.sort_order as point_sort_order',
-                'gpi.id as image_id',
-                'gpi.image_url',
-                'gpi.image_key',
-                'gpi.sort_order as image_sort_order',
-                'gpi.view_orientation',
-                'gpi.azimuth_deg as image_azimuth_deg',
-                'gpi.fov_deg',
-                'gpi.caption',
-                'gpi.attrs',
             ])
             ->selectRaw(
                 "ST_Distance(gp.geom, {$pointSql}) AS distance_m, " .
@@ -263,13 +245,75 @@ class LandmarkController extends Controller
             $query->where('gp.floor', $floor);
         }
 
-        $candidates = $query
+        $points = $query
             ->orderBy('distance_m')
             ->orderBy('gp.sort_order')
-            ->orderBy('gpi.sort_order')
             ->limit(100)
             ->get();
 
+        $visiblePoints = [];
+        $halfRequestFov = $requestFov / 2.0;
+
+        foreach ($points as $point) {
+            $pointLat = (float) $point->latitude;
+            $pointLng = (float) $point->longitude;
+            $bearingToPoint = $this->bearingDegrees($lat, $lng, $pointLat, $pointLng);
+
+            // If user and point are effectively coincident, keep the point eligible;
+            // an azimuth is undefined at zero distance but it is certainly not "behind".
+            $pointAngleDiff = $bearingToPoint === null
+                ? 0.0
+                : $this->circularAngleDiff($bearingToPoint, $normalizedHeading);
+
+            if ($pointAngleDiff > $halfRequestFov) {
+                continue;
+            }
+
+            $point->bearing_to_guidance_deg = $bearingToPoint;
+            $point->point_angle_diff_deg = $pointAngleDiff;
+            $visiblePoints[] = $point;
+        }
+
+        if (!$visiblePoints) {
+            return null;
+        }
+
+        usort($visiblePoints, static function ($a, $b): int {
+            $distanceCompare = ((float) $a->distance_m) <=> ((float) $b->distance_m);
+            if ($distanceCompare !== 0) {
+                return $distanceCompare;
+            }
+
+            $angleCompare = ((float) $a->point_angle_diff_deg) <=> ((float) $b->point_angle_diff_deg);
+            if ($angleCompare !== 0) {
+                return $angleCompare;
+            }
+
+            return ((int) $a->point_sort_order) <=> ((int) $b->point_sort_order);
+        });
+
+        // Load images for all visible candidates once. Iterating points in the ranked
+        // order below naturally switches to the next point when the nearer one has no
+        // image (or no image with usable direction metadata).
+        $pointIds = array_map(static fn ($point) => (int) $point->guidance_point_id, $visiblePoints);
+        $imageRows = DB::table('guidance_point_images as gpi')
+            ->whereIn('gpi.point_id', $pointIds)
+            ->orderBy('gpi.point_id')
+            ->orderBy('gpi.sort_order')
+            ->get([
+                'gpi.id as image_id',
+                'gpi.point_id',
+                'gpi.image_url',
+                'gpi.image_key',
+                'gpi.sort_order as image_sort_order',
+                'gpi.view_orientation',
+                'gpi.azimuth_deg as image_azimuth_deg',
+                'gpi.fov_deg',
+                'gpi.caption',
+                'gpi.attrs',
+            ]);
+
+        $imagesByPoint = collect($imageRows)->groupBy(static fn ($row) => (int) $row->point_id);
         $orientationAzimuths = [
             'north' => 0.0,
             'north_east' => 45.0,
@@ -281,97 +325,137 @@ class LandmarkController extends Controller
             'north_west' => 315.0,
         ];
 
-        $best = null;
-        $bestScore = null;
-
-        foreach ($candidates as $candidate) {
-            $orientation = $candidate->view_orientation ?: 'unknown';
-            $imageAzimuth = $candidate->image_azimuth_deg !== null
-                ? (float) $candidate->image_azimuth_deg
-                : ($orientationAzimuths[$orientation] ?? null);
-
-            if ($imageAzimuth === null && $candidate->point_azimuth_deg !== null) {
-                $imageAzimuth = (float) $candidate->point_azimuth_deg;
-            }
-
-            if ($imageAzimuth === null) {
+        // Stage 2: after a point has passed floor/distance/FOV selection, choose the
+        // image from the side where the user actually is relative to that point.
+        // Only this stage uses the shrine-wide local-north offset.
+        foreach ($visiblePoints as $point) {
+            $images = $imagesByPoint->get((int) $point->guidance_point_id, collect());
+            if ($images->isEmpty()) {
                 continue;
             }
 
-            $imageAzimuth = fmod($imageAzimuth, 360.0);
-            if ($imageAzimuth < 0) {
-                $imageAzimuth += 360.0;
+            $pointLat = (float) $point->latitude;
+            $pointLng = (float) $point->longitude;
+            $bearingPointToUser = $this->bearingDegrees($pointLat, $pointLng, $lat, $lng);
+
+            // At the exact point, use the reverse movement direction as a stable
+            // approximation of the approach side.
+            if ($bearingPointToUser === null) {
+                $bearingPointToUser = $this->normalizeAzimuth($normalizedHeading + 180.0);
             }
 
-            $rawDiff = abs($imageAzimuth - $localHeading);
-            $angleDiff = min($rawDiff, 360.0 - $rawDiff);
+            $localViewBearing = $this->normalizeAzimuth($bearingPointToUser - $localNorthOffset);
+            $bestImage = null;
+            $bestImageDiff = null;
 
-            $imageFov = $candidate->fov_deg !== null ? (float) $candidate->fov_deg : 60.0;
-            $allowedHalfAngle = max(0.5, min($imageFov, $requestFov) / 2.0);
+            foreach ($images as $image) {
+                $orientation = $image->view_orientation ?: 'unknown';
+                $imageAzimuth = $image->image_azimuth_deg !== null
+                    ? (float) $image->image_azimuth_deg
+                    : ($orientationAzimuths[$orientation] ?? null);
 
-            if ($angleDiff > $allowedHalfAngle) {
+                if ($imageAzimuth === null && $point->point_azimuth_deg !== null) {
+                    $imageAzimuth = (float) $point->point_azimuth_deg;
+                }
+
+                if ($imageAzimuth === null) {
+                    continue;
+                }
+
+                $imageAzimuth = $this->normalizeAzimuth($imageAzimuth);
+                $imageDiff = $this->circularAngleDiff($imageAzimuth, $localViewBearing);
+
+                if (
+                    $bestImage === null
+                    || $imageDiff < $bestImageDiff
+                    || ($imageDiff === $bestImageDiff && (int) $image->image_sort_order < (int) $bestImage->image_sort_order)
+                ) {
+                    $bestImage = $image;
+                    $bestImageDiff = $imageDiff;
+                    $bestImage->resolved_azimuth_deg = $imageAzimuth;
+                }
+            }
+
+            if ($bestImage === null) {
                 continue;
             }
 
-            $score = [
-                (float) $candidate->distance_m,
-                $angleDiff,
-                (int) $candidate->point_sort_order,
-                (int) $candidate->image_sort_order,
+            $imageFov = $bestImage->fov_deg !== null ? (float) $bestImage->fov_deg : 60.0;
+            $imageMatched = $bestImageDiff <= ($imageFov / 2.0);
+            $imageUrl = $bestImage->image_key
+                ? Storage::disk('public')->url($bestImage->image_key)
+                : $bestImage->image_url;
+
+            return [
+                'status' => 'OK',
+                'source' => 'guidance_points',
+                'guidance_point_id' => (int) $point->guidance_point_id,
+                'poi_id' => null,
+                'floor' => (int) $point->floor,
+                'area_id' => $point->area_id !== null ? (int) $point->area_id : null,
+                'distance_m' => (float) $point->distance_m,
+                'heading' => $normalizedHeading,
+                'request_fov_deg' => $requestFov,
+                'bearing_to_guidance_deg' => $point->bearing_to_guidance_deg !== null
+                    ? (float) $point->bearing_to_guidance_deg
+                    : null,
+                'point_angle_diff_deg' => (float) $point->point_angle_diff_deg,
+                'bearing_guidance_to_user_deg' => $bearingPointToUser,
+                'local_north_offset_deg' => $localNorthOffset,
+                'local_view_bearing_deg' => $localViewBearing,
+                'selected_orientation' => $bestImage->view_orientation ?: 'unknown',
+                // Keep the legacy key for clients/logs, but it now explicitly means
+                // the image-vs-local-view difference, not point FOV eligibility.
+                'angle_diff_deg' => (float) $bestImageDiff,
+                'image_angle_diff_deg' => (float) $bestImageDiff,
+                'imageMatched' => $imageMatched,
+                'location' => [
+                    'lat' => $pointLat,
+                    'lng' => $pointLng,
+                ],
+                'content' => [
+                    'title' => $point->title,
+                    'description' => $point->description,
+                ],
+                'image' => [
+                    'id' => (int) $bestImage->image_id,
+                    'url' => $imageUrl,
+                    'path' => $bestImage->image_key,
+                    'orientation' => $bestImage->view_orientation ?: 'unknown',
+                    'azimuth_deg' => (float) $bestImage->resolved_azimuth_deg,
+                    'fov_deg' => $imageFov,
+                    'caption' => $bestImage->caption,
+                    'attrs' => $bestImage->attrs ? json_decode($bestImage->attrs, true) : [],
+                ],
             ];
-
-            $isBetter = $bestScore === null
-                || $score[0] < $bestScore[0]
-                || ($score[0] === $bestScore[0] && $score[1] < $bestScore[1])
-                || ($score[0] === $bestScore[0] && $score[1] === $bestScore[1] && $score[2] < $bestScore[2])
-                || ($score[0] === $bestScore[0] && $score[1] === $bestScore[1] && $score[2] === $bestScore[2] && $score[3] < $bestScore[3]);
-
-            if ($isBetter) {
-                $best = $candidate;
-                $bestScore = $score;
-                $best->resolved_azimuth_deg = $imageAzimuth;
-                $best->angle_diff_deg = $angleDiff;
-            }
         }
 
-        if ($best === null) {
+        return null;
+    }
+
+    private function normalizeAzimuth(float $degrees): float
+    {
+        return fmod(fmod($degrees, 360.0) + 360.0, 360.0);
+    }
+
+    private function circularAngleDiff(float $a, float $b): float
+    {
+        $diff = abs($this->normalizeAzimuth($a) - $this->normalizeAzimuth($b));
+        return min($diff, 360.0 - $diff);
+    }
+
+    private function bearingDegrees(float $fromLat, float $fromLng, float $toLat, float $toLng): ?float
+    {
+        if (abs($fromLat - $toLat) < 1e-12 && abs($fromLng - $toLng) < 1e-12) {
             return null;
         }
 
-        $imageUrl = $best->image_key
-            ? Storage::disk('public')->url($best->image_key)
-            : $best->image_url;
+        $lat1 = deg2rad($fromLat);
+        $lat2 = deg2rad($toLat);
+        $dLng = deg2rad($toLng - $fromLng);
+        $y = sin($dLng) * cos($lat2);
+        $x = cos($lat1) * sin($lat2) - sin($lat1) * cos($lat2) * cos($dLng);
 
-        return [
-            'status' => 'OK',
-            'source' => 'guidance_points',
-            'guidance_point_id' => (int) $best->guidance_point_id,
-            'poi_id' => null,
-            'floor' => (int) $best->floor,
-            'area_id' => $best->area_id !== null ? (int) $best->area_id : null,
-            'distance_m' => (float) $best->distance_m,
-            'heading' => $normalizedHeading,
-            'selected_orientation' => $best->view_orientation ?: 'unknown',
-            'angle_diff_deg' => (float) $best->angle_diff_deg,
-            'location' => [
-                'lat' => (float) $best->latitude,
-                'lng' => (float) $best->longitude,
-            ],
-            'content' => [
-                'title' => $best->title,
-                'description' => $best->description,
-            ],
-            'image' => [
-                'id' => (int) $best->image_id,
-                'url' => $imageUrl,
-                'path' => $best->image_key,
-                'orientation' => $best->view_orientation ?: 'unknown',
-                'azimuth_deg' => (float) $best->resolved_azimuth_deg,
-                'fov_deg' => $best->fov_deg !== null ? (float) $best->fov_deg : 60.0,
-                'caption' => $best->caption,
-                'attrs' => $best->attrs ? json_decode($best->attrs, true) : [],
-            ],
-        ];
+        return $this->normalizeAzimuth(rad2deg(atan2($y, $x)));
     }
-
 }
