@@ -16,10 +16,18 @@ class UserResource extends JsonResource
 
     public function toArray($request): array
     {
+        $canonicalFullName = trim(implode(' ', array_filter([
+            $this->first_name,
+            $this->last_name,
+        ], static fn ($part) => is_string($part) && trim($part) !== '')));
+
         return [
             'id' => $this->id,
             'phone' => $this->mobile,
-            'fullName' => $this->name,
+            'username' => $this->username,
+            'firstName' => $this->first_name,
+            'lastName' => $this->last_name,
+            'fullName' => $canonicalFullName !== '' ? $canonicalFullName : $this->name,
             'email' => $this->email,
             'nationalId' => $this->national_id,
             'gender' => $this->gender,
