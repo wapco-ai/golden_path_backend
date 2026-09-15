@@ -11,8 +11,6 @@ use Symfony\Component\HttpFoundation\Response;
 
 class CaptureRouteHistory
 {
-    public function __construct(protected PublicJwtService $jwt) {}
-
     public function handle(Request $request, Closure $next): Response
     {
         if (!$request->is('api/v1/routing/route')) {
@@ -43,7 +41,9 @@ class CaptureRouteHistory
             return null;
         }
 
-        $payload = $this->jwt->decode(substr($authHeader, 7));
+        /** @var PublicJwtService $jwt */
+        $jwt = app(PublicJwtService::class);
+        $payload = $jwt->decode(substr($authHeader, 7));
         if (!$payload || ($payload['type'] ?? null) !== 'access') {
             return null;
         }
