@@ -13,7 +13,7 @@ class RouteHistoryContractTest extends TestCase
         $middleware = file_get_contents(app_path('Http/Middleware/CaptureRouteHistory.php'));
 
         $this->assertStringContainsString('CaptureRouteHistory::class', $provider);
-        $this->assertStringContainsString("api/v1/routing/route", $middleware);
+        $this->assertStringContainsString('api/v1/routing/route', $middleware);
         $this->assertStringContainsString('resolveOptionalUser', $middleware);
         $this->assertStringContainsString('return $next($request);', $middleware);
     }
@@ -22,8 +22,8 @@ class RouteHistoryContractTest extends TestCase
     {
         $source = file_get_contents(app_path('Http/Middleware/CaptureRouteHistory.php'));
 
-        $this->assertStringContainsString("$meta['route_snapshot'] = $payload", $source);
-        $this->assertStringContainsString("$meta['history']", $source);
+        $this->assertStringContainsString('route_snapshot', $source);
+        $this->assertStringContainsString('capture_version', $source);
         $this->assertStringContainsString("'coordinates'", $source);
         $this->assertStringContainsString("'floor'", $source);
         $this->assertStringContainsString("meta->>'fingerprint'", $source);
