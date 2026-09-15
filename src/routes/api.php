@@ -110,6 +110,12 @@ Route::prefix('v1')->group(function () {
     // Admin-only APIs (must be protected)
     // ------------------------------------------------------------------
     Route::middleware(AdminAuth::class)->group(function () {
+        Route::get('admin/connectors', [\App\Http\Controllers\Api\Admin\ConnectorController::class, 'index']);
+        Route::get('admin/connectors/candidates', [\App\Http\Controllers\Api\Admin\ConnectorController::class, 'candidates']);
+        Route::get('admin/connectors/{id}', [\App\Http\Controllers\Api\Admin\ConnectorController::class, 'show'])->whereNumber('id');
+        Route::post('admin/connectors', [\App\Http\Controllers\Api\Admin\ConnectorController::class, 'store']);
+        Route::put('admin/connectors/{id}', [\App\Http\Controllers\Api\Admin\ConnectorController::class, 'update'])->whereNumber('id');
+        Route::post('doors/with-info', [DoorCrudController::class, 'storeWithInfo']);
         // Van CRUD
         Route::prefix('admin/van')->group(function () {
             Route::get('/nodes',        [VanNodeAdminController::class, 'index']);
@@ -236,6 +242,7 @@ Route::prefix('v1')->group(function () {
     // NOTE: admin/van and admin/* routes were moved under AdminAuth middleware above.
 
     Route::get('/languages', [LanguageController::class, 'index']);
+    Route::get('/floors', [\App\Http\Controllers\Api\Admin\ConnectorController::class, 'floors']);
     Route::get('/maps/geojson', [MapGeojsonController::class, 'index']);
     Route::get('/qrcodes/{code}', [QrLocationController::class, 'show']);
     Route::get('/kouthar/{date}', [KoutharProxyController::class, 'fetch'])

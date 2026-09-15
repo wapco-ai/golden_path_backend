@@ -75,3 +75,44 @@ jobs:
 
       - name: Public profile name contract tests (no database server)
         run: vendor/bin/phpunit tests/Feature/ProfileNameContractTest.php
+
+  multifloor-integration:
+    name: multifloor-integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240
+        with:
+          php-version: "8.3"
+          extensions: pdo_pgsql
+          tools: composer:v2
+          coverage: none
+      - name: Install isolated PostgreSQL and routing extensions
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-16 postgresql-16-postgis-3 postgresql-16-pgrouting
+          sudo systemctl start postgresql
+          sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'connector_test_only'"
+          sudo -u postgres createdb golden_path_connector_test
+      - name: Load immutable baseline and versioned connector changes
+        env:
+          PGPASSWORD: connector_test_only
+        run: |
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/baseline/2026-08-26/golden_path.schema.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260915_160000_multifloor_connectors.up.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260915_160100_multifloor_routing.up.sql
+      - run: composer install --no-interaction --prefer-dist --no-progress --no-scripts
+        working-directory: src
+      - name: Real database, HTTP and routing tests
+        run: vendor/bin/phpunit -c phpunit.integration.xml
+        working-directory: src
+
+      - name: Verify empty-schema rollback and reapply
+        env:
+          PGPASSWORD: connector_test_only
+        run: |
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260915_160100_multifloor_routing.down.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260915_160000_multifloor_connectors.down.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260915_160000_multifloor_connectors.up.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260915_160100_multifloor_routing.up.sql

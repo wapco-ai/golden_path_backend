@@ -44,7 +44,7 @@ class RoutingController extends Controller
                 'gender' => 'required|string|in:male,female,both',
                 'floor'  => 'nullable|integer',
 
-                'lang'            => 'nullable|string',
+                'lang'            => 'nullable|in:fa,en,ar,ur',
                 'maxAlternatives' => 'nullable|integer|min:0|max:3',
 
                 'origin.type' => 'required|string|in:coordinate,poi,door,area,qrcode',
@@ -52,19 +52,21 @@ class RoutingController extends Controller
                 'origin.code' => 'nullable|string',
                 'origin.lat'  => 'nullable|numeric',
                 'origin.lon'  => 'nullable|numeric',
+                'origin.floor' => 'nullable|integer',
 
                 'destination.type' => 'required|string|in:coordinate,poi,door,area,qrcode',
                 'destination.id'   => 'nullable|integer',
                 'destination.code' => 'nullable|string',
                 'destination.lat'  => 'nullable|numeric',
                 'destination.lon'  => 'nullable|numeric',
+                'destination.floor' => 'nullable|integer',
             ]);
 
             $mode   = $data['mode'];
             $gender = $data['gender'];
             $floor  = isset($data['floor']) ? (int)$data['floor'] : 0;
 
-            $lang    = $data['lang'] ?? 'fa_enum';
+            $lang    = $data['lang'] ?? 'fa';
             $maxAlts = $data['maxAlternatives'] ?? 2;
 
             $o = $data['origin'];
@@ -129,64 +131,19 @@ class RoutingController extends Controller
             $destLat   = (float)$d['lat'];
             $destLon   = (float)$d['lon'];
 
-            // 3) صدا زدن تابع fn_route_analyze_walk در Postgres
-            try {
-                $row = DB::selectOne("
-                    SELECT fn_route_analyze_walk(
-                        now()::timestamptz,
-                        ?::gender_enum,
-                        ?::text,
-                        ?::smallint,
-                        ST_Transform(
-                            ST_SetSRID(ST_MakePoint(?::double precision, ?::double precision), 4326),
-                            32640
-                        ),
-                        ST_Transform(
-                            ST_SetSRID(ST_MakePoint(?::double precision, ?::double precision), 4326),
-                            32640
-                        ),
-                        ?::lang_enum,
-                        ?::int
-                    ) AS route_json
-                ", [
-                    $gender,
-                    $mode,
-                    $floor,
-                    $originLon,
-                    $originLat,
-                    $destLon,
-                    $destLat,
-                    $lang,
-                    $maxAlts,
-                ]);
-            } catch (Throwable $e) {
-                $log['ok'] = false;
-                $log['meta']['status']    = 'DB_ERROR';
-                $log['meta']['http_code'] = 500;
-                $log['meta']['error']     = $e->getMessage();
-
-                $this->insertRouteLogSafe($log, $t0);
-
-                return response()->json([
-                    'ok' => false,
-                    'message' => 'خطا در اجرای عملیات پایگاه داده: ' . $e->getMessage(),
-                ], 500);
+            $originFloor = (int) ($o['floor'] ?? $floor);
+            $destinationFloor = (int) ($d['floor'] ?? $floor);
+            $knownFloors = DB::table('routing_floors')->whereIn('floor', [$originFloor, $destinationFloor])->pluck('floor')->map(fn ($f) => (int) $f)->all();
+            if (!in_array($originFloor, $knownFloors, true) || !in_array($destinationFloor, $knownFloors, true)) {
+                throw ValidationException::withMessages(['floor' => 'طبقهٔ مبدأ یا مقصد معتبر نیست.']);
             }
-
-            if (!$row || $row->route_json === null) {
-                $log['ok'] = false;
-                $log['meta']['status']    = 'DB_INVALID_RESPONSE';
-                $log['meta']['http_code'] = 500;
-
-                $this->insertRouteLogSafe($log, $t0);
-
-                return response()->json([
-                    'ok'      => false,
-                    'message' => 'fn_route_analyze_walk مقدار نامعتبری برگرداند.',
-                ], 500);
-            }
-
-            $result = json_decode($row->route_json, true);
+            $log['meta']['origin_floor'] = $originFloor;
+            $log['meta']['destination_floor'] = $destinationFloor;
+            $result = app(\App\Services\MultiFloorRoutingService::class)->route(
+                $gender, $mode, $originFloor, $destinationFloor,
+                ['lat' => $originLat, 'lon' => $originLon], ['lat' => $destLat, 'lon' => $destLon],
+                $lang, (int) $maxAlts
+            );
 
             // استخراج distance/duration اگر در خروجی موجود بود
             $distance = data_get($result, 'distanceMeters');   // بعضی خروجی‌ها distance می‌دهند
@@ -194,7 +151,7 @@ class RoutingController extends Controller
             $duration = data_get($result, 'estimatedMinutes');   // بعضی خروجی‌ها duration می‌دهند
 
             $log['distance_m'] = is_numeric($distance) ? (float)$distance : null;
-            $log['duration_s'] = is_numeric($duration) ? (float)$duration : null;
+            $log['duration_s'] = is_numeric($duration) ? (float)$duration * 60 : null;
 
 
             // 4) NO_PATH
