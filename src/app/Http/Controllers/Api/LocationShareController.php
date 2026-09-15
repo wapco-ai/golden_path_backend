@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreLocationShareRequest;
 use App\Models\User;
 use App\Models\UserLocationShare;
+use App\Support\PhoneNormalizer;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -19,7 +20,7 @@ class LocationShareController extends Controller
         $sender = $request->user();
         $data = $request->validated();
 
-        $normalizedPhone = $this->normalizeMobile($data['recipientPhone']);
+        $normalizedPhone = PhoneNormalizer::iranMobile($data['recipientPhone']);
         if ($normalizedPhone === null) {
             return response()->json([
                 'code' => 'RECIPIENT_UNAVAILABLE',
@@ -27,11 +28,10 @@ class LocationShareController extends Controller
             ], 422);
         }
 
-        $recipient = User::query()
-            ->whereIn('mobile', $this->phoneCandidates($normalizedPhone))
-            ->where('is_admin', false)
-            ->where('status', 'active')
-            ->first();
+        // Existing accounts may contain legacy/raw mobile formatting. Resolve by the
+        // canonical identity and fail closed if more than one active account maps to
+        // the same number, so a share is never delivered to an arbitrary recipient.
+        $recipient = $this->resolveUniqueRecipient($normalizedPhone);
 
         if (!$recipient || $recipient->id === $sender->id) {
             return response()->json([
@@ -50,6 +50,13 @@ class LocationShareController extends Controller
             : null;
 
         $share = DB::transaction(function () use ($sender, $recipient, $lat, $lng, $floor, $accuracy) {
+            // Serialize concurrent create/retry requests for the same sender-recipient
+            // pair before replacing the active share.
+            DB::selectOne(
+                'SELECT pg_advisory_xact_lock(hashtextextended(?, 0))',
+                [$sender->id.':'.$recipient->id]
+            );
+
             UserLocationShare::query()
                 ->where('sender_user_id', $sender->id)
                 ->where('recipient_user_id', $recipient->id)
@@ -200,43 +207,35 @@ SQL,
         return $canonical !== '' ? $canonical : (trim((string) $user->name) ?: 'User');
     }
 
-    private function normalizeMobile(string $phone): ?string
+    private function resolveUniqueRecipient(string $normalizedPhone): ?User
     {
-        $translated = strtr(trim($phone), [
-            '۰' => '0', '۱' => '1', '۲' => '2', '۳' => '3', '۴' => '4',
-            '۵' => '5', '۶' => '6', '۷' => '7', '۸' => '8', '۹' => '9',
-            '٠' => '0', '١' => '1', '٢' => '2', '٣' => '3', '٤' => '4',
-            '٥' => '5', '٦' => '6', '٧' => '7', '٨' => '8', '٩' => '9',
-        ]);
+        $matches = [];
 
-        $digits = preg_replace('/\D+/', '', $translated) ?? '';
-        if (str_starts_with($digits, '0098')) {
-            $digits = substr($digits, 2);
-        }
-        if (str_starts_with($digits, '98') && strlen($digits) === 12) {
-            $digits = '0'.substr($digits, 2);
-        } elseif (str_starts_with($digits, '9') && strlen($digits) === 10) {
-            $digits = '0'.$digits;
-        }
+        User::query()
+            ->select(['id', 'mobile', 'name', 'first_name', 'last_name'])
+            ->where('is_admin', false)
+            ->where('status', 'active')
+            ->whereNotNull('mobile')
+            ->orderBy('id')
+            ->chunkById(500, function ($users) use ($normalizedPhone, &$matches) {
+                foreach ($users as $user) {
+                    if (PhoneNormalizer::iranMobile($user->mobile) === $normalizedPhone) {
+                        $matches[] = $user;
+                        if (count($matches) > 1) {
+                            return false;
+                        }
+                    }
+                }
 
-        return preg_match('/^09\d{9}$/', $digits) ? $digits : null;
-    }
+                return true;
+            });
 
-    private function phoneCandidates(string $normalized): array
-    {
-        $withoutZero = substr($normalized, 1);
-
-        return array_values(array_unique([
-            $normalized,
-            '98'.$withoutZero,
-            '+98'.$withoutZero,
-            '0098'.$withoutZero,
-        ]));
+        return count($matches) === 1 ? $matches[0] : null;
     }
 
     private function maskMobile(?string $mobile): ?string
     {
-        $normalized = $mobile ? $this->normalizeMobile($mobile) : null;
+        $normalized = PhoneNormalizer::iranMobile($mobile);
         if (!$normalized) {
             return null;
         }
