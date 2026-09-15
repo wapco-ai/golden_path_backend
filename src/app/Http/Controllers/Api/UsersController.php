@@ -11,6 +11,7 @@ use App\Services\ProfileService;
 use App\Support\ApiError;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Storage;
 
 class UsersController extends Controller
 {
@@ -127,19 +128,25 @@ class UsersController extends Controller
         return response()->json((new UserResource($user, $completed))->toArray($request));
     }
 
-    // ---------------- Optional avatar (اگر FileController موجودتان را ترجیح می‌دهید می‌تونیم این را منتقل کنیم)
     public function uploadAvatar(Request $request)
     {
-        // اینجا اگر سرویس فایل پروژه (FileController) استاندارد دارد، بهتر است از همان استفاده شود.
-        // فعلاً یک پیاده‌سازی ساده:
         $request->validate(['file' => 'required|file|image|max:2048']);
 
-        $path = $request->file('file')->store('public/avatars');
-        $url = str_replace('public/', '/storage/', $path);
-
         $user = $request->user();
+        if (!$user) return $this->error('UNAUTHORIZED', 'UNAUTHORIZED', 401);
+
+        $oldAvatarUrl = $user->avatar_url;
+        $path = $request->file('file')->store('avatars', 'public');
+
+        if (!$path) {
+            return $this->error('AVATAR_UPLOAD_FAILED', 'ذخیره تصویر پروفایل انجام نشد.', 500);
+        }
+
+        $url = '/storage/'.ltrim($path, '/');
         $user->avatar_url = $url;
         $user->save();
+
+        $this->deleteStoredAvatar($oldAvatarUrl);
 
         return response()->json(['url' => $url]);
     }
@@ -147,9 +154,29 @@ class UsersController extends Controller
     public function deleteAvatar(Request $request)
     {
         $user = $request->user();
+        if (!$user) return $this->error('UNAUTHORIZED', 'UNAUTHORIZED', 401);
+
+        $oldAvatarUrl = $user->avatar_url;
         $user->avatar_url = null;
         $user->save();
 
+        $this->deleteStoredAvatar($oldAvatarUrl);
+
         return response()->json(['message' => 'AVATAR_DELETED']);
+    }
+
+    private function deleteStoredAvatar(?string $avatarUrl): void
+    {
+        if (!$avatarUrl) {
+            return;
+        }
+
+        $path = parse_url($avatarUrl, PHP_URL_PATH) ?: $avatarUrl;
+        if (!str_starts_with($path, '/storage/avatars/')) {
+            return;
+        }
+
+        $relativePath = ltrim(substr($path, strlen('/storage/')), '/');
+        Storage::disk('public')->delete($relativePath);
     }
 }
