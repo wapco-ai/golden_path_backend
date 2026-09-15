@@ -15,6 +15,21 @@ use Illuminate\Support\Str;
 
 class DoorCrudController extends Controller
 {
+    public function storeWithInfo(Request $request)
+    {
+        $data = $request->validate(['point' => 'required|array', 'info' => 'required|array']);
+        if (in_array(data_get($data, 'info.operational.place_function'), \App\Services\ConnectorService::KINDS, true)) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['info' => 'توقف‌های اتصال بین طبقات را تکمیل کنید.']);
+        }
+        return DB::transaction(function () use ($data) {
+            $point = array_merge($data['point'], ['is_open' => false]);
+            $created = $this->store(Request::create('/', 'POST', $point))->getData(true);
+            $id = $created['door']['id'];
+            $this->saveInfo(Request::create('/', 'PUT', $data['info']), $id);
+            return response()->json($created, 201);
+        });
+    }
+
     /**
      * POST /api/v1/doors
      *
@@ -791,6 +806,11 @@ class DoorCrudController extends Controller
             'notes'               => $notes,
         ];
 
+        $access = DB::selectOne('SELECT id, floor, ST_Y(ST_Transform(geom,4326)) AS lat, ST_X(ST_Transform(geom,4326)) AS lon FROM door_access_points WHERE door_id=? ORDER BY id LIMIT 1', [$doorId]);
+        $response['point'] = $access;
+        $connector = app(\App\Services\ConnectorService::class)->forDoor($doorId);
+        if ($connector) $response = array_replace($response, $connector['info']);
+        $response['connector'] = $connector;
         return response()->json($response);
     }
 
@@ -801,8 +821,11 @@ class DoorCrudController extends Controller
      *
      * ذخیره اطلاعات گام‌های مودال (basic_info, grouping, operational, time/prayer, notes)
      */
-    public function saveInfo(Request $request, $id)
+    public function saveInfo(Request $request, $id, bool $fromConnector = false)
     {
+        if (!$fromConnector && DB::table('routing_connector_stops')->where('door_id', $id)->exists()) {
+            abort(409, 'این نقطه عضو یک اتصال چندطبقه است؛ اطلاعات مجموعهٔ اتصال را ویرایش کنید.');
+        }
         $data = $request->validate([
             'basic_info' => 'required|array',
             'basic_info.title' => 'required|array',
@@ -820,7 +843,7 @@ class DoorCrudController extends Controller
             'operational.transport_modes.*' => 'string',
             'operational.gender_access' => 'nullable|array',
             'operational.gender_access.*' => 'string',
-            'operational.place_function' => 'nullable|string',
+            'operational.place_function' => 'nullable|in:door,connection,stair,ramp,elevator,escalator',
             'operational.is_covered' => 'nullable|boolean',
 
             'time_restrictions' => 'nullable|array',
