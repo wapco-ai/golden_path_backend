@@ -79,6 +79,9 @@ jobs:
       - name: Location sharing contract tests (no database server)
         run: vendor/bin/phpunit tests/Feature/LocationShareContractTest.php
 
+      - name: Route history contract tests (no database server)
+        run: vendor/bin/phpunit tests/Feature/RouteHistoryContractTest.php
+
   multifloor-integration:
     name: multifloor-integration
     runs-on: ubuntu-24.04
