@@ -40,8 +40,14 @@ class UsersController extends Controller
         $user->status = 'active';
         $user->mobile = $data['phone'];
 
-        // fullName اگر نبود، مقدار پیشفرض
-        $user->name = $data['fullName'] ?? 'کاربر';
+        if (array_key_exists('firstName', $data) || array_key_exists('lastName', $data)) {
+            $user->first_name = trim((string) ($data['firstName'] ?? ''));
+            $user->last_name = trim((string) ($data['lastName'] ?? ''));
+            $user->name = trim($user->first_name.' '.$user->last_name);
+        } else {
+            // Legacy clients still send fullName.
+            $user->name = trim((string) ($data['fullName'] ?? '')) ?: 'کاربر';
+        }
 
         // email اگر نبود null
         $user->email = $data['email'] ?? null;
@@ -94,7 +100,17 @@ class UsersController extends Controller
             if ($exists) return $this->error('EMAIL_EXISTS', 'ایمیل قبلاً ثبت شده است.', 409);
         }
 
-        if (array_key_exists('fullName', $data)) $user->name = $data['fullName'];
+        $hasSeparateName = array_key_exists('firstName', $data) || array_key_exists('lastName', $data);
+        if ($hasSeparateName) {
+            $user->first_name = trim((string) ($data['firstName'] ?? $user->first_name ?? ''));
+            $user->last_name = trim((string) ($data['lastName'] ?? $user->last_name ?? ''));
+            // Keep the legacy/display field synchronized without trying to parse it later.
+            $user->name = trim($user->first_name.' '.$user->last_name);
+        } elseif (array_key_exists('fullName', $data)) {
+            // Backward compatibility only: do not guess first/last-name boundaries.
+            $user->name = trim((string) $data['fullName']);
+        }
+
         if (array_key_exists('email', $data)) $user->email = $data['email'] ?? $user->email;
         if (array_key_exists('gender', $data)) $user->gender = $data['gender'];
         if (array_key_exists('birthDate', $data)) $user->birth_date = $data['birthDate'];
@@ -108,8 +124,6 @@ class UsersController extends Controller
 
         $completed = $this->profiles->isProfileCompleted($user);
 
-        // اگر کامل نبود => طبق نیازمندی code PROFILE_INCOMPLETE هم می‌تونید برگردونید
-        // ولی شما گفتید پاسخ user + profileCompleted true/false؛ همین را رعایت می‌کنیم.
         return response()->json((new UserResource($user, $completed))->toArray($request));
     }
 
