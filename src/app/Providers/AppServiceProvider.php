@@ -21,6 +21,7 @@ class AppServiceProvider extends ServiceProvider
     {
         $this->mapApiRoutes();
         $this->mapLocationShareRoutes();
+        $this->mapRouteHistoryRoutes();
     }
 
     /**
@@ -44,7 +45,7 @@ class AppServiceProvider extends ServiceProvider
     protected function mapApiRoutes()
     {
         Route::prefix('api')
-             ->middleware('api')
+             ->middleware(['api', \App\Http\Middleware\CaptureRouteHistory::class])
              ->namespace('App\\Http\\Controllers\\Api')
              ->group(base_path('routes/api.php'));
     }
@@ -57,5 +58,15 @@ class AppServiceProvider extends ServiceProvider
         Route::prefix('api/v1')
             ->middleware(['api', \App\Http\Middleware\UserAuth::class])
             ->group(base_path('routes/location_shares.php'));
+    }
+
+    /**
+     * Route history is private to the authenticated end user.
+     */
+    protected function mapRouteHistoryRoutes(): void
+    {
+        Route::prefix('api/v1')
+            ->middleware(['api', \App\Http\Middleware\UserAuth::class])
+            ->group(base_path('routes/route_history.php'));
     }
 }
