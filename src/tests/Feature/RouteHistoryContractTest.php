@@ -22,8 +22,8 @@ class RouteHistoryContractTest extends TestCase
     {
         $source = file_get_contents(app_path('Http/Controllers/Api/RoutingController.php'));
 
-        $this->assertStringContainsString("$log['meta']['route_snapshot'] = $result", $source);
-        $this->assertStringContainsString("$log['meta']['history']", $source);
+        $this->assertStringContainsString("\$log['meta']['route_snapshot'] = \$result", $source);
+        $this->assertStringContainsString("\$log['meta']['history']", $source);
         $this->assertStringContainsString("'capture_version' => 1", $source);
         $this->assertStringContainsString("'origin_floor'", $source);
         $this->assertStringContainsString("'destination_floor'", $source);
