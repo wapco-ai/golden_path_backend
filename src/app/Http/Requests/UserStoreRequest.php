@@ -11,7 +11,9 @@ class UserStoreRequest extends FormRequest
         return [
             'phone' => 'required|string|max:32',
 
-            // بعد از OTP ممکن است نیاید
+            // Canonical name fields for new clients; fullName remains supported for legacy clients.
+            'firstName' => 'nullable|required_with:lastName|string|min:1|max:100',
+            'lastName' => 'nullable|required_with:firstName|string|min:1|max:100',
             'fullName' => 'nullable|string|min:3|max:255',
 
             // بعد از OTP ممکن است نیاید؛ اگر آمد، email معتبر باشد (بدون dns)
