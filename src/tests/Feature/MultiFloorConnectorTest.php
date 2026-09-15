@@ -200,7 +200,7 @@ class MultiFloorConnectorTest extends TestCase
     {
         $this->create(); $this->rebuild();
         $destination=DB::selectOne('SELECT ST_X(g) lon, ST_Y(g) lat FROM (SELECT ST_Transform(ST_SetSRID(ST_MakePoint(500015,4000015),32640),4326) g) p');
-        $body=['origin'=>$this->point+['floor'=>0], 'destination'=>(array)$destination+['floor'=>0], 'mode'=>'walk','gender'=>'both'];
+        $body=['origin'=>$this->point+['floor'=>0,'type'=>'coordinate'], 'destination'=>(array)$destination+['floor'=>0,'type'=>'coordinate'], 'mode'=>'walk','gender'=>'both'];
         $r=$this->postJson('/api/v1/routing/route',$body)->assertOk()->json();
         $this->assertFalse($r['multifloor']);
         $this->assertSame('LineString',$r['geo']['geometry']['type']);
