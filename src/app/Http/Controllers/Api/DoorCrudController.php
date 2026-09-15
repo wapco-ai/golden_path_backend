@@ -259,6 +259,8 @@ class DoorCrudController extends Controller
      */
     public function update(Request $request, $id)
     {
+        abort_if(DB::table('routing_connector_stops')->where('door_id', $id)->exists(), 409,
+            'این نقطه عضو اتصال مشترک است؛ تغییرات را از فرم اتصال اعمال کنید.');
         $validated = $request->validate([
             'basic_info'                       => 'required|array',
             'basic_info.title'                 => 'required|array',
@@ -457,6 +459,8 @@ class DoorCrudController extends Controller
      */
     public function move(Request $request, $id)
     {
+        abort_if(DB::table('routing_connector_stops')->where('door_id', $id)->exists(), 409,
+            'این نقطه عضو اتصال مشترک است؛ تغییرات را از فرم اتصال اعمال کنید.');
         $doorId = (int) $id;
 
         $x = $request->input('x', $request->input('utm_x'));
@@ -806,7 +810,7 @@ class DoorCrudController extends Controller
             'notes'               => $notes,
         ];
 
-        $access = DB::selectOne('SELECT id, floor, ST_Y(ST_Transform(geom,4326)) AS lat, ST_X(ST_Transform(geom,4326)) AS lon FROM door_access_points WHERE door_id=? ORDER BY id LIMIT 1', [$doorId]);
+        $access = DB::selectOne('SELECT id AS access_id, floor, ST_Y(ST_Transform(geom,4326)) AS lat, ST_X(ST_Transform(geom,4326)) AS lon FROM door_access_points WHERE door_id=? ORDER BY id LIMIT 1', [$doorId]);
         $response['point'] = $access;
         $connector = app(\App\Services\ConnectorService::class)->forDoor($doorId);
         if ($connector) $response = array_replace($response, $connector['info']);

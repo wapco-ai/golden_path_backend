@@ -96,7 +96,7 @@ class MultiFloorRoutingService
         $multifloor = count(array_filter($segments, fn ($s) => $s['kind']!=='walk')) > 0;
         return ['status'=>'OK','source'=>'computed','distanceMeters'=>$distance,'estimatedMinutes'=>$duration/60,
             'steps'=>$steps,'sahns'=>$sahns,'segments'=>$segments,'multifloor'=>$multifloor,
-            'geo'=>['type'=>'Feature','geometry'=>['type'=>'MultiLineString','coordinates'=>$lines],
+            'geo'=>['type'=>'Feature','geometry'=>['type'=>$multifloor ? 'MultiLineString' : 'LineString','coordinates'=>$multifloor ? $lines : ($lines[0] ?? [])],
                 'properties'=>['segments'=>$segments,'multifloor'=>$multifloor,'distanceMeters'=>$distance,'durationSeconds'=>$duration]]];
     }
 }

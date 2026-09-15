@@ -18,6 +18,7 @@ class MultiFloorConnectorTest extends TestCase
     {
         parent::setUp();
         if (config('database.default') !== 'pgsql') $this->markTestSkipped('Requires isolated PostgreSQL/PostGIS database.');
+        config(['app.jwt_secret' => str_repeat('test-only-', 8)]);
         Queue::fake();
         DB::beginTransaction();
         DB::table('routing_floors')->insertOrIgnore(['floor'=>1,'label'=>'طبقه ۱','sort_order'=>1]);
@@ -29,6 +30,7 @@ class MultiFloorConnectorTest extends TestCase
         }
         $point = DB::selectOne('SELECT ST_X(g) AS lon,ST_Y(g) AS lat FROM (SELECT ST_Transform(ST_SetSRID(ST_MakePoint(500005,4000005),32640),4326) g) p');
         $this->point = ['lat'=>(float)$point->lat,'lon'=>(float)$point->lon];
+        DB::statement('REFRESH MATERIALIZED VIEW mv_area_door_stats');
     }
 
     protected function tearDown(): void
@@ -156,4 +158,68 @@ class MultiFloorConnectorTest extends TestCase
         DB::table('routing_connector_stops')->where('id',$c['stops'][1]['id'])->delete();
         $this->assertSame('NO_PATH',$this->route()['status']);
     }
+    public function test_shared_update_reuses_portals_and_syncs_metadata_and_directional_costs(): void
+    {
+        $c=$this->create();
+        $before=DB::table('doors')->count();
+        $p=$this->payload('ramp'); $p['version']=$c['version']; $p['stops']=$c['stops'];
+        $p['info']['basic_info']['title']['fa']='رمپ مشترک';
+        $p['stops'][0]['reverse_seconds']=12; $p['stops'][1]['reverse_seconds']=13;
+        $updated=$this->putJson('/api/v1/admin/connectors/'.$c['id'],$p)->assertOk()->json();
+        $this->assertSame($before,DB::table('doors')->count());
+        $this->assertSame($c['version']+1,$updated['version']);
+        foreach ($updated['stops'] as $stop) {
+            $this->getJson('/api/v1/doors/'.$stop['door_id'].'/info')->assertOk()
+                ->assertJsonPath('basic_info.title.fa','رمپ مشترک')->assertJsonPath('connector.kind','ramp');
+            $this->putJson('/api/v1/doors/'.$stop['door_id'].'/move',['x'=>500005,'y'=>4000005])->assertStatus(409);
+            $this->putJson('/api/v1/doors/'.$stop['door_id'].'/info',$p['info'])->assertStatus(409);
+        }
+        $this->rebuild();
+        $reverse=$this->route(1,-1,'wheelchair');
+        $this->assertSame('OK',$reverse['status']);
+        $this->assertEqualsWithDelta(25,array_sum(array_column($reverse['segments'],'duration_s')),0.01);
+        $this->assertEqualsWithDelta(16,array_sum(array_column($this->route()['segments'],'duration_s')),0.01);
+    }
+
+    public function test_real_queue_job_keeps_dap_geometry_and_generates_usable_routes(): void
+    {
+        $c=$this->create();
+        foreach ($c['stops'] as $stop) {
+            DB::statement('UPDATE doors SET geom=ST_Translate(geom,500,500) WHERE id=?',[$stop['door_id']]);
+            (new \App\Jobs\RebuildDoorGraphJob($stop['door_id']))->handle();
+            // The historical job uses transaction-scoped scratch tables; production jobs commit separately.
+            DB::statement('DROP TABLE IF EXISTS tmp_door_affected_areas');
+        }
+        $this->assertSame('OK',$this->route()['status']);
+        $bad=DB::scalar("SELECT count(*) FROM routing_nodes rn JOIN door_access_points dap ON dap.id=rn.ref_id
+            WHERE rn.ref_table='door_access_points' AND ST_Distance(rn.geom,dap.geom)>1");
+        $this->assertSame(0,(int)$bad);
+    }
+
+    public function test_same_floor_route_and_http_floor_validation(): void
+    {
+        $this->create(); $this->rebuild();
+        $destination=DB::selectOne('SELECT ST_X(g) lon, ST_Y(g) lat FROM (SELECT ST_Transform(ST_SetSRID(ST_MakePoint(500015,4000015),32640),4326) g) p');
+        $body=['origin'=>$this->point+['floor'=>0], 'destination'=>(array)$destination+['floor'=>0], 'mode'=>'walk','gender'=>'both'];
+        $r=$this->postJson('/api/v1/routing/route',$body)->assertOk()->json();
+        $this->assertFalse($r['multifloor']);
+        $this->assertSame('LineString',$r['geo']['geometry']['type']);
+        $this->assertGreaterThan(14,$r['distanceMeters']);
+        $body['destination']['floor']=9;
+        $this->postJson('/api/v1/routing/route',$body)->assertUnprocessable();
+        $body['destination']['floor']=1;
+        $this->postJson('/api/v1/routing/route',$body)->assertOk()->assertJsonPath('multifloor',true);
+    }
+
+    public function test_inactive_connector_and_closed_stair_landing_have_no_route(): void
+    {
+        $p=$this->payload('stair');
+        $c=$this->create($p); $this->rebuild();
+        DB::table('doors')->where('id',$c['stops'][1]['door_id'])->update(['is_open'=>false]);
+        $this->assertSame('NO_PATH',$this->route()['status']);
+        DB::table('doors')->where('id',$c['stops'][1]['door_id'])->update(['is_open'=>true]);
+        DB::table('routing_connectors')->where('id',$c['id'])->update(['is_active'=>false]);
+        $this->assertSame('NO_PATH',$this->route()['status']);
+    }
+
 }
