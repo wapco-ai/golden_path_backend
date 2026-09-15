@@ -233,7 +233,8 @@ class MultiFloorConnectorTest extends TestCase
         ) INSERT INTO door_access_points(door_id,geom,floor,from_area,to_area,needs_review)
           SELECT id,ST_SetSRID(ST_MakePoint(500020,4000005),32640),0,?,?,false FROM d RETURNING door_id",
           [$this->areas[0],$next,$this->areas[0],$next])->door_id;
-        DB::select('SELECT fn_rebuild_routing_floor(0::smallint,false)');
+        $this->rebuild();
+        (new \App\Jobs\RebuildDoorGraphJob($door))->handle();
         $destination=DB::selectOne('SELECT ST_X(g) lon, ST_Y(g) lat FROM (SELECT ST_Transform(ST_SetSRID(ST_MakePoint(500030,4000005),32640),4326) g) p');
         $service=app(MultiFloorRoutingService::class);
         $r=$service->route('both','walk',0,0,$this->point,(array)$destination,'fa',0);

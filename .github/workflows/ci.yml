@@ -107,3 +107,12 @@ jobs:
       - name: Real database, HTTP and routing tests
         run: vendor/bin/phpunit -c phpunit.integration.xml
         working-directory: src
+
+      - name: Verify empty-schema rollback and reapply
+        env:
+          PGPASSWORD: connector_test_only
+        run: |
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260915_160100_multifloor_routing.down.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260915_160000_multifloor_connectors.down.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260915_160000_multifloor_connectors.up.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260915_160100_multifloor_routing.up.sql
