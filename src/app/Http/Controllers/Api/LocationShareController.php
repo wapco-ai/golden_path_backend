@@ -57,26 +57,30 @@ class LocationShareController extends Controller
                 ->where('expires_at', '>', now())
                 ->update(['revoked_at' => now(), 'updated_at' => now()]);
 
-            $share = UserLocationShare::create([
-                'sender_user_id' => $sender->id,
-                'recipient_user_id' => $recipient->id,
-                'floor' => $floor,
-                'accuracy_m' => $accuracy,
-                'source' => 'gps',
-                'expires_at' => now()->addMinutes(self::SHARE_TTL_MINUTES),
-            ]);
+            $expiresAt = now()->addMinutes(self::SHARE_TTL_MINUTES);
+            $row = DB::selectOne(
+                <<<'SQL'
+INSERT INTO public.user_location_shares
+    (sender_user_id, recipient_user_id, geom, floor, accuracy_m, source, expires_at, created_at, updated_at)
+VALUES
+    (?, ?, ST_Transform(ST_SetSRID(ST_MakePoint(?, ?), 4326), 32640), ?, ?, ?, ?, now(), now())
+RETURNING id
+SQL,
+                [
+                    $sender->id,
+                    $recipient->id,
+                    $lng,
+                    $lat,
+                    $floor,
+                    $accuracy,
+                    'gps',
+                    $expiresAt,
+                ]
+            );
 
-            DB::table('user_location_shares')
-                ->where('id', $share->id)
-                ->update([
-                    'geom' => DB::raw(sprintf(
-                        'ST_Transform(ST_SetSRID(ST_MakePoint(%F, %F), 4326), 32640)',
-                        $lng,
-                        $lat
-                    )),
-                ]);
-
-            return $share->fresh(['sender', 'recipient']);
+            return UserLocationShare::query()
+                ->with(['sender', 'recipient'])
+                ->findOrFail((int) $row->id);
         });
 
         return response()->json([
