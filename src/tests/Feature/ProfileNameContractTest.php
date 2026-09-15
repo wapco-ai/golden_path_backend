@@ -58,9 +58,9 @@ class ProfileNameContractTest extends TestCase
     {
         $source = file_get_contents(app_path('Http/Controllers/Api/UsersController.php'));
 
-        $this->assertStringContainsString("$user->first_name = trim", $source);
-        $this->assertStringContainsString("$user->last_name = trim", $source);
-        $this->assertStringContainsString("$user->name = trim($user->first_name.' '.$user->last_name)", $source);
+        $this->assertStringContainsString('$user->first_name = trim', $source);
+        $this->assertStringContainsString('$user->last_name = trim', $source);
+        $this->assertStringContainsString("\$user->name = trim(\$user->first_name.' '.\$user->last_name)", $source);
         $this->assertStringNotContainsString('preg_split', $source);
         $this->assertStringNotContainsString('explode(', $source);
     }
