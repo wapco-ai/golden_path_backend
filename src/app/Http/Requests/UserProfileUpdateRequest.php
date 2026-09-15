@@ -12,6 +12,9 @@ class UserProfileUpdateRequest extends FormRequest
     public function rules(): array
     {
         return [
+            // Canonical profile name fields. Keep fullName for backward-compatible clients.
+            'firstName' => 'sometimes|required_with:lastName|string|min:1|max:100',
+            'lastName' => 'sometimes|required_with:firstName|string|min:1|max:100',
             'fullName' => 'sometimes|required|string|min:3|max:255',
             'email' => 'sometimes|nullable|email:rfc,dns|max:255',
             'gender' => ['sometimes','nullable', Rule::in(['male','female','other'])],

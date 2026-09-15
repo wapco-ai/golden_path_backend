@@ -11,6 +11,7 @@ use App\Services\ProfileService;
 use App\Support\ApiError;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Storage;
 
 class UsersController extends Controller
 {
@@ -40,8 +41,14 @@ class UsersController extends Controller
         $user->status = 'active';
         $user->mobile = $data['phone'];
 
-        // fullName اگر نبود، مقدار پیشفرض
-        $user->name = $data['fullName'] ?? 'کاربر';
+        if (array_key_exists('firstName', $data) || array_key_exists('lastName', $data)) {
+            $user->first_name = trim((string) ($data['firstName'] ?? ''));
+            $user->last_name = trim((string) ($data['lastName'] ?? ''));
+            $user->name = trim($user->first_name.' '.$user->last_name);
+        } else {
+            // Legacy clients still send fullName.
+            $user->name = trim((string) ($data['fullName'] ?? '')) ?: 'کاربر';
+        }
 
         // email اگر نبود null
         $user->email = $data['email'] ?? null;
@@ -94,7 +101,17 @@ class UsersController extends Controller
             if ($exists) return $this->error('EMAIL_EXISTS', 'ایمیل قبلاً ثبت شده است.', 409);
         }
 
-        if (array_key_exists('fullName', $data)) $user->name = $data['fullName'];
+        $hasSeparateName = array_key_exists('firstName', $data) || array_key_exists('lastName', $data);
+        if ($hasSeparateName) {
+            $user->first_name = trim((string) ($data['firstName'] ?? $user->first_name ?? ''));
+            $user->last_name = trim((string) ($data['lastName'] ?? $user->last_name ?? ''));
+            // Keep the legacy/display field synchronized without trying to parse it later.
+            $user->name = trim($user->first_name.' '.$user->last_name);
+        } elseif (array_key_exists('fullName', $data)) {
+            // Backward compatibility only: do not guess first/last-name boundaries.
+            $user->name = trim((string) $data['fullName']);
+        }
+
         if (array_key_exists('email', $data)) $user->email = $data['email'] ?? $user->email;
         if (array_key_exists('gender', $data)) $user->gender = $data['gender'];
         if (array_key_exists('birthDate', $data)) $user->birth_date = $data['birthDate'];
@@ -108,24 +125,28 @@ class UsersController extends Controller
 
         $completed = $this->profiles->isProfileCompleted($user);
 
-        // اگر کامل نبود => طبق نیازمندی code PROFILE_INCOMPLETE هم می‌تونید برگردونید
-        // ولی شما گفتید پاسخ user + profileCompleted true/false؛ همین را رعایت می‌کنیم.
         return response()->json((new UserResource($user, $completed))->toArray($request));
     }
 
-    // ---------------- Optional avatar (اگر FileController موجودتان را ترجیح می‌دهید می‌تونیم این را منتقل کنیم)
     public function uploadAvatar(Request $request)
     {
-        // اینجا اگر سرویس فایل پروژه (FileController) استاندارد دارد، بهتر است از همان استفاده شود.
-        // فعلاً یک پیاده‌سازی ساده:
         $request->validate(['file' => 'required|file|image|max:2048']);
 
-        $path = $request->file('file')->store('public/avatars');
-        $url = str_replace('public/', '/storage/', $path);
-
         $user = $request->user();
+        if (!$user) return $this->error('UNAUTHORIZED', 'UNAUTHORIZED', 401);
+
+        $oldAvatarUrl = $user->avatar_url;
+        $path = $request->file('file')->store('avatars', 'public');
+
+        if (!$path) {
+            return $this->error('AVATAR_UPLOAD_FAILED', 'ذخیره تصویر پروفایل انجام نشد.', 500);
+        }
+
+        $url = '/storage/'.ltrim($path, '/');
         $user->avatar_url = $url;
         $user->save();
+
+        $this->deleteStoredAvatar($oldAvatarUrl);
 
         return response()->json(['url' => $url]);
     }
@@ -133,9 +154,29 @@ class UsersController extends Controller
     public function deleteAvatar(Request $request)
     {
         $user = $request->user();
+        if (!$user) return $this->error('UNAUTHORIZED', 'UNAUTHORIZED', 401);
+
+        $oldAvatarUrl = $user->avatar_url;
         $user->avatar_url = null;
         $user->save();
 
+        $this->deleteStoredAvatar($oldAvatarUrl);
+
         return response()->json(['message' => 'AVATAR_DELETED']);
+    }
+
+    private function deleteStoredAvatar(?string $avatarUrl): void
+    {
+        if (!$avatarUrl) {
+            return;
+        }
+
+        $path = parse_url($avatarUrl, PHP_URL_PATH) ?: $avatarUrl;
+        if (!str_starts_with($path, '/storage/avatars/')) {
+            return;
+        }
+
+        $relativePath = ltrim(substr($path, strlen('/storage/')), '/');
+        Storage::disk('public')->delete($relativePath);
     }
 }
