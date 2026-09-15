@@ -222,4 +222,26 @@ class MultiFloorConnectorTest extends TestCase
         $this->assertSame('NO_PATH',$this->route()['status']);
     }
 
+    public function test_ordinary_door_routes_between_areas_and_respects_one_way_and_closure(): void
+    {
+        $c=$this->create();
+        $next=DB::selectOne("INSERT INTO areas(geom,area_type,floor)
+          SELECT ST_Translate(geom,20,0),area_type,floor FROM areas WHERE id=? RETURNING id",[$this->areas[0]])->id;
+        $door=DB::selectOne("WITH d AS (
+          INSERT INTO doors(geom,from_area,to_area,floor,bidirectional)
+          VALUES(ST_GeomFromText('LINESTRING(500020 4000004,500020 4000006)',32640),?,?,0,false) RETURNING id
+        ) INSERT INTO door_access_points(door_id,geom,floor,from_area,to_area,needs_review)
+          SELECT id,ST_SetSRID(ST_MakePoint(500020,4000005),32640),0,?,?,false FROM d RETURNING door_id",
+          [$this->areas[0],$next,$this->areas[0],$next])->door_id;
+        DB::select('SELECT fn_rebuild_routing_floor(0::smallint,false)');
+        $destination=DB::selectOne('SELECT ST_X(g) lon, ST_Y(g) lat FROM (SELECT ST_Transform(ST_SetSRID(ST_MakePoint(500030,4000005),32640),4326) g) p');
+        $service=app(MultiFloorRoutingService::class);
+        $r=$service->route('both','walk',0,0,$this->point,(array)$destination,'fa',0);
+        $this->assertSame('OK',$r['status']);
+        $this->assertNotEmpty(array_filter($r['steps'],fn($s)=>$s['type']==='stepPassDoor'));
+        $this->assertSame('NO_PATH',$service->route('both','walk',0,0,(array)$destination,$this->point,'fa',0)['status']);
+        DB::table('doors')->where('id',$door)->update(['is_open'=>false]);
+        $this->assertSame('NO_PATH',$service->route('both','walk',0,0,$this->point,(array)$destination,'fa',0)['status']);
+    }
+
 }

@@ -36,7 +36,7 @@ BEGIN
     e.id,e.door_id,f.floor,f.floor,e.geom,ST_StartPoint(e.geom),ST_EndPoint(e.geom),
     ST_Length(e.geom)/speed,ST_Length(e.geom)/speed,ST_Length(e.geom)
   FROM routing_floors f CROSS JOIN LATERAL fn_routing_edges_live_param(p_now,p_gender,p_mode,f.floor) e
-  WHERE e.cost>0 AND e.geom IS NOT NULL AND NOT ST_IsEmpty(e.geom);
+  WHERE (e.cost>0 OR e.reverse_cost>0) AND e.geom IS NOT NULL AND NOT ST_IsEmpty(e.geom);
 
   -- Physical presence/readiness is checked for the whole connector; access rules
   -- are checked per boarding/alighting stop (a lift may pass a closed intermediate floor).
