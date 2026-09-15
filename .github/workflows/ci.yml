@@ -72,3 +72,6 @@ jobs:
 
       - name: Guidance source and coverage contract tests (mocked DB, no database server)
         run: vendor/bin/phpunit tests/Feature --filter='Guidance(ImageSource|Coverage)Test'
+
+      - name: Public profile name contract tests (no database server)
+        run: vendor/bin/phpunit tests/Feature/ProfileNameContractTest.php
