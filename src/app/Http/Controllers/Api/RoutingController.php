@@ -33,7 +33,7 @@ class RoutingController extends Controller
                 'http_code'  => null,
                 'ip'         => $request->ip(),
                 'user_agent' => $request->userAgent(),
-                'user_id'    => optional($request->user())->id, // اگر احراز هویت داشتید
+                'user_id'    => optional($request->user())->id,
             ],
         ];
 
@@ -47,18 +47,20 @@ class RoutingController extends Controller
                 'lang'            => 'nullable|in:fa,en,ar,ur',
                 'maxAlternatives' => 'nullable|integer|min:0|max:3',
 
-                'origin.type' => 'required|string|in:coordinate,poi,door,area,qrcode',
-                'origin.id'   => 'nullable|integer',
-                'origin.code' => 'nullable|string',
-                'origin.lat'  => 'nullable|numeric',
-                'origin.lon'  => 'nullable|numeric',
+                'origin.type'  => 'required|string|in:coordinate,poi,door,area,qrcode',
+                'origin.id'    => 'nullable|integer',
+                'origin.code'  => 'nullable|string',
+                'origin.name'  => 'nullable|string|max:255',
+                'origin.lat'   => 'nullable|numeric',
+                'origin.lon'   => 'nullable|numeric',
                 'origin.floor' => 'nullable|integer',
 
-                'destination.type' => 'required|string|in:coordinate,poi,door,area,qrcode',
-                'destination.id'   => 'nullable|integer',
-                'destination.code' => 'nullable|string',
-                'destination.lat'  => 'nullable|numeric',
-                'destination.lon'  => 'nullable|numeric',
+                'destination.type'  => 'required|string|in:coordinate,poi,door,area,qrcode',
+                'destination.id'    => 'nullable|integer',
+                'destination.code'  => 'nullable|string',
+                'destination.name'  => 'nullable|string|max:255',
+                'destination.lat'   => 'nullable|numeric',
+                'destination.lon'   => 'nullable|numeric',
                 'destination.floor' => 'nullable|integer',
             ]);
 
@@ -83,18 +85,22 @@ class RoutingController extends Controller
                 'lang' => $lang,
                 'maxAlternatives' => $maxAlts,
                 'origin' => [
-                    'type' => $o['type'] ?? null,
-                    'id'   => $o['id'] ?? null,
-                    'code' => $o['code'] ?? null,
-                    'lat'  => $o['lat'] ?? null,
-                    'lon'  => $o['lon'] ?? null,
+                    'type'  => $o['type'] ?? null,
+                    'id'    => $o['id'] ?? null,
+                    'code'  => $o['code'] ?? null,
+                    'name'  => $o['name'] ?? null,
+                    'lat'   => $o['lat'] ?? null,
+                    'lon'   => $o['lon'] ?? null,
+                    'floor' => isset($o['floor']) ? (int)$o['floor'] : $floor,
                 ],
                 'destination' => [
-                    'type' => $d['type'] ?? null,
-                    'id'   => $d['id'] ?? null,
-                    'code' => $d['code'] ?? null,
-                    'lat'  => $d['lat'] ?? null,
-                    'lon'  => $d['lon'] ?? null,
+                    'type'  => $d['type'] ?? null,
+                    'id'    => $d['id'] ?? null,
+                    'code'  => $d['code'] ?? null,
+                    'name'  => $d['name'] ?? null,
+                    'lat'   => $d['lat'] ?? null,
+                    'lon'   => $d['lon'] ?? null,
+                    'floor' => isset($d['floor']) ? (int)$d['floor'] : $floor,
                 ],
             ];
 
@@ -146,13 +152,11 @@ class RoutingController extends Controller
             );
 
             // استخراج distance/duration اگر در خروجی موجود بود
-            $distance = data_get($result, 'distanceMeters');   // بعضی خروجی‌ها distance می‌دهند
-
-            $duration = data_get($result, 'estimatedMinutes');   // بعضی خروجی‌ها duration می‌دهند
+            $distance = data_get($result, 'distanceMeters');
+            $duration = data_get($result, 'estimatedMinutes');
 
             $log['distance_m'] = is_numeric($distance) ? (float)$distance : null;
             $log['duration_s'] = is_numeric($duration) ? (float)$duration * 60 : null;
-
 
             // 4) NO_PATH
             if (isset($result['status']) && $result['status'] === 'NO_PATH') {
@@ -167,16 +171,35 @@ class RoutingController extends Controller
             }
 
             // 5) OK
-            $log['ok'] = true;
-            $log['meta']['status']    = 'OK';
-            $log['meta']['http_code'] = 200;
-
-            $this->insertRouteLogSafe($log, $t0);
-
             $result['ok']     = true;
             $result['mode']   = $mode;
             $result['gender'] = $gender;
             $result['floor']  = $floor;
+
+            $log['ok'] = true;
+            $log['meta']['status']    = 'OK';
+            $log['meta']['http_code'] = 200;
+
+            // تاریخچه فقط برای کاربر احراز هویت‌شده ذخیره می‌شود و همان خروجی موتور
+            // مسیریابی را نگه می‌دارد؛ هیچ هندسه‌ای در این بخش بازسازی نمی‌شود.
+            if ($request->user()) {
+                $log['meta']['history'] = [
+                    'origin' => [
+                        'name' => $o['name'] ?? null,
+                        'coordinates' => [$originLat, $originLon],
+                        'floor' => $originFloor,
+                    ],
+                    'destination' => [
+                        'name' => $d['name'] ?? null,
+                        'coordinates' => [$destLat, $destLon],
+                        'floor' => $destinationFloor,
+                    ],
+                    'capture_version' => 1,
+                ];
+                $log['meta']['route_snapshot'] = $result;
+            }
+
+            $this->insertRouteLogSafe($log, $t0);
 
             return response()->json($result);
         } catch (ValidationException $e) {
@@ -219,13 +242,29 @@ class RoutingController extends Controller
             $meta = $log['meta'] ?? [];
             $meta['timing_ms'] = $ms;
 
-            // fingerprint پایدار از درخواست
+            // fingerprint پایدار از پارامترهایی که روی خروجی مسیر اثر می‌گذارند
             $fingerprintPayload = [
                 'mode'   => $log['mode'] ?? null,
                 'gender' => $log['gender'] ?? null,
                 'floor'  => $log['floor'] ?? null,
-                'o'      => data_get($meta, 'request.origin'),
-                'd'      => data_get($meta, 'request.destination'),
+                'lang'   => data_get($meta, 'request.lang'),
+                'maxAlternatives' => data_get($meta, 'request.maxAlternatives'),
+                'origin_floor' => data_get($meta, 'request.origin.floor'),
+                'destination_floor' => data_get($meta, 'request.destination.floor'),
+                'o' => [
+                    'type' => data_get($meta, 'request.origin.type'),
+                    'id'   => data_get($meta, 'request.origin.id'),
+                    'code' => data_get($meta, 'request.origin.code'),
+                    'lat'  => data_get($meta, 'request.origin.lat'),
+                    'lon'  => data_get($meta, 'request.origin.lon'),
+                ],
+                'd' => [
+                    'type' => data_get($meta, 'request.destination.type'),
+                    'id'   => data_get($meta, 'request.destination.id'),
+                    'code' => data_get($meta, 'request.destination.code'),
+                    'lat'  => data_get($meta, 'request.destination.lat'),
+                    'lon'  => data_get($meta, 'request.destination.lon'),
+                ],
                 'user_id' => data_get($meta, 'user_id'),
             ];
             $fingerprint = sha1(json_encode($fingerprintPayload, JSON_UNESCAPED_UNICODE));
