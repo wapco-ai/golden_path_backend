@@ -4,13 +4,11 @@ namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\Api\LanguageController;
 use App\Repositories\Admin\EloquentSignedUserRepository;
 use App\Repositories\Admin\SignedUserRepositoryInterface;
 use App\Repositories\Admin\AdminRepositoryInterface;
 use App\Repositories\Admin\EloquentAdminRepository;
 use App\Services\Admin\DashboardService;
-
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -21,7 +19,8 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot()
     {
-        $this->mapApiRoutes(); // تعریف مسیرهای API
+        $this->mapApiRoutes();
+        $this->mapLocationShareRoutes();
     }
 
     /**
@@ -38,9 +37,7 @@ class AppServiceProvider extends ServiceProvider
     }
 
     /**
-     * Define the "api" routes for the application.
-     *
-     * These routes are typically stateless.
+     * Define the main API routes.
      *
      * @return void
      */
@@ -48,7 +45,17 @@ class AppServiceProvider extends ServiceProvider
     {
         Route::prefix('api')
              ->middleware('api')
-             ->namespace('App\Http\Controllers\Api') // اطمینان از فضای نام صحیح
+             ->namespace('App\\Http\\Controllers\\Api')
              ->group(base_path('routes/api.php'));
+    }
+
+    /**
+     * Keep location-sharing routes isolated while reusing the public user JWT middleware.
+     */
+    protected function mapLocationShareRoutes(): void
+    {
+        Route::prefix('api/v1')
+            ->middleware(['api', \App\Http\Middleware\UserAuth::class])
+            ->group(base_path('routes/location_shares.php'));
     }
 }
