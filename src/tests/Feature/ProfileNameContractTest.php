@@ -64,4 +64,13 @@ class ProfileNameContractTest extends TestCase
         $this->assertStringNotContainsString('preg_split', $source);
         $this->assertStringNotContainsString('explode(', $source);
     }
+
+    public function test_avatar_upload_uses_public_disk_and_not_private_default_disk(): void
+    {
+        $source = file_get_contents(app_path('Http/Controllers/Api/UsersController.php'));
+
+        $this->assertStringContainsString("store('avatars', 'public')", $source);
+        $this->assertStringContainsString("Storage::disk('public')->delete", $source);
+        $this->assertStringNotContainsString("store('public/avatars')", $source);
+    }
 }
