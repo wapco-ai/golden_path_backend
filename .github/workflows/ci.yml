@@ -76,6 +76,9 @@ jobs:
       - name: Public profile name contract tests (no database server)
         run: vendor/bin/phpunit tests/Feature/ProfileNameContractTest.php
 
+      - name: Location sharing contract tests (no database server)
+        run: vendor/bin/phpunit tests/Feature/LocationShareContractTest.php
+
   multifloor-integration:
     name: multifloor-integration
     runs-on: ubuntu-24.04
