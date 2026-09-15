@@ -7,7 +7,7 @@ use Tests\TestCase;
 // No database access: verifies auth, capture, source and endpoint contracts.
 class RouteHistoryContractTest extends TestCase
 {
-    public function test_routing_is_captured_without_making_public_routing_require_auth(): void
+    public function test_routing_resolves_optional_user_without_making_public_routing_require_auth(): void
     {
         $provider = file_get_contents(app_path('Providers/AppServiceProvider.php'));
         $middleware = file_get_contents(app_path('Http/Middleware/CaptureRouteHistory.php'));
@@ -18,18 +18,19 @@ class RouteHistoryContractTest extends TestCase
         $this->assertStringContainsString('return $next($request);', $middleware);
     }
 
-    public function test_capture_persists_the_exact_successful_route_output_and_user_inputs(): void
+    public function test_successful_snapshot_is_written_before_the_same_route_log_insert(): void
     {
-        $source = file_get_contents(app_path('Http/Middleware/CaptureRouteHistory.php'));
+        $source = file_get_contents(app_path('Http/Controllers/Api/RoutingController.php'));
 
-        $this->assertStringContainsString('route_snapshot', $source);
-        $this->assertStringContainsString('capture_version', $source);
-        $this->assertStringContainsString("'coordinates'", $source);
-        $this->assertStringContainsString("'floor'", $source);
-        $this->assertStringContainsString("meta->>'fingerprint'", $source);
+        $this->assertStringContainsString("$log['meta']['route_snapshot'] = $result", $source);
+        $this->assertStringContainsString("$log['meta']['history']", $source);
+        $this->assertStringContainsString("'capture_version' => 1", $source);
+        $this->assertStringContainsString("'origin_floor'", $source);
+        $this->assertStringContainsString("'destination_floor'", $source);
+        $this->assertStringContainsString("'maxAlternatives'", $source);
     }
 
-    public function test_history_endpoint_is_user_authenticated_and_user_scoped(): void
+    public function test_history_endpoint_is_user_authenticated_and_uses_postgres_safe_json_predicates(): void
     {
         $provider = file_get_contents(app_path('Providers/AppServiceProvider.php'));
         $routes = file_get_contents(base_path('routes/route_history.php'));
@@ -39,18 +40,31 @@ class RouteHistoryContractTest extends TestCase
         $this->assertStringContainsString('UserAuth::class', $provider);
         $this->assertStringContainsString("Route::get('users/me/route-history'", $routes);
         $this->assertStringContainsString("meta->>'user_id'", $controller);
-        $this->assertStringContainsString("meta ? 'route_snapshot'", $controller);
+        $this->assertStringContainsString("jsonb_exists(meta, 'route_snapshot')", $controller);
+        $this->assertStringContainsString("jsonb_exists(meta, 'history')", $controller);
+        $this->assertStringNotContainsString("meta ? 'route_snapshot'", $controller);
+    }
+
+    public function test_history_lookup_has_a_partial_user_and_time_index(): void
+    {
+        $sql = file_get_contents(base_path('../db/changes/20260915_204000_route_history_index.up.sql'));
+
+        $this->assertStringContainsString('route_logs_user_history_ts_idx', $sql);
+        $this->assertStringContainsString("(meta->>'user_id')", $sql);
+        $this->assertStringContainsString('ts DESC, id DESC', $sql);
+        $this->assertStringContainsString("jsonb_exists(meta, 'route_snapshot')", $sql);
     }
 
     public function test_history_feature_never_builds_route_geometry_from_doors_geom(): void
     {
-        $capture = file_get_contents(app_path('Http/Middleware/CaptureRouteHistory.php'));
+        $routing = file_get_contents(app_path('Http/Controllers/Api/RoutingController.php'));
+        $middleware = file_get_contents(app_path('Http/Middleware/CaptureRouteHistory.php'));
         $controller = file_get_contents(app_path('Http/Controllers/Api/RouteHistoryController.php'));
-        $combined = $capture . "\n" . $controller;
+        $combined = $routing . "\n" . $middleware . "\n" . $controller;
 
         $this->assertStringNotContainsString('doors.geom', $combined);
-        $this->assertStringNotContainsString('ST_MakeLine', $combined);
-        $this->assertStringNotContainsString('ST_StartPoint', $combined);
-        $this->assertStringNotContainsString('ST_EndPoint', $combined);
+        $this->assertStringNotContainsString('ST_MakeLine', $middleware . "\n" . $controller);
+        $this->assertStringNotContainsString('ST_StartPoint', $middleware . "\n" . $controller);
+        $this->assertStringNotContainsString('ST_EndPoint', $middleware . "\n" . $controller);
     }
 }
