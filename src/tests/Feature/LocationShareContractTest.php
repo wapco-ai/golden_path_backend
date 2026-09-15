@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Http\Requests\StoreLocationShareRequest;
+use App\Support\PhoneNormalizer;
 use Illuminate\Support\Facades\Validator;
 use Tests\TestCase;
 
@@ -33,6 +34,15 @@ class LocationShareContractTest extends TestCase
         $this->assertTrue($invalidFloor->fails());
     }
 
+    public function test_phone_normalizer_accepts_supported_legacy_formats(): void
+    {
+        $this->assertSame('09121234567', PhoneNormalizer::iranMobile('0912 123 4567'));
+        $this->assertSame('09121234567', PhoneNormalizer::iranMobile('+98 912 123 4567'));
+        $this->assertSame('09121234567', PhoneNormalizer::iranMobile('۰۰۹۸۹۱۲۱۲۳۴۵۶۷'));
+        $this->assertSame('09121234567', PhoneNormalizer::iranMobile('٠٩١٢١٢٣٤٥٦٧'));
+        $this->assertNull(PhoneNormalizer::iranMobile('12345'));
+    }
+
     public function test_routes_are_user_authenticated_and_not_public(): void
     {
         $provider = file_get_contents(app_path('Providers/AppServiceProvider.php'));
@@ -54,6 +64,16 @@ class LocationShareContractTest extends TestCase
         $this->assertStringContainsString("->whereNull('revoked_at')", $source);
         $this->assertStringContainsString("->where('expires_at', '>', now())", $source);
         $this->assertStringContainsString('SHARE_TTL_MINUTES = 30', $source);
+    }
+
+    public function test_recipient_resolution_fails_closed_and_share_replacement_is_serialized(): void
+    {
+        $source = file_get_contents(app_path('Http/Controllers/Api/LocationShareController.php'));
+
+        $this->assertStringContainsString('resolveUniqueRecipient', $source);
+        $this->assertStringContainsString('count($matches) > 1', $source);
+        $this->assertStringContainsString('pg_advisory_xact_lock', $source);
+        $this->assertStringContainsString("\$sender->id.':'.\$recipient->id", $source);
     }
 
     public function test_shared_geometry_is_transformed_to_project_srid_without_touching_routing_geometry_sources(): void
