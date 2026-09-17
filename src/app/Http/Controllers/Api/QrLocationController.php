@@ -27,6 +27,7 @@ class QrLocationController extends Controller
 
         // پیدا کردن QR
         $qr = DB::table('qrcodes')
+            ->selectRaw('qrcodes.*, ST_Y(ST_Transform(geom,4326)) AS lat, ST_X(ST_Transform(geom,4326)) AS lon')
             ->where('code', $code)
             ->where('is_active', true)
             ->first();
@@ -83,6 +84,8 @@ class QrLocationController extends Controller
         $response = [
             'id'   => $qr->code,
             'lang' => $language,
+            'floor' => $this->resolveFloor($qr, $attrs),
+            'coordinates' => [(float) $qr->lat, (float) $qr->lon],
 
             'title'        => $title,
             'location'     => $location,
@@ -101,6 +104,26 @@ class QrLocationController extends Controller
         ];
 
         return response()->json($response);
+    }
+
+    private function resolveFloor(object $qr, array $attrs): ?int
+    {
+        // An explicit placement floor takes precedence over the referenced destination.
+        $value = $attrs['floor'] ?? null;
+        if ($value === null) {
+            $table = ['poi' => 'poi_points', 'door' => 'doors', 'area' => 'areas'][$qr->target_type] ?? null;
+            if ($table && $qr->target_id !== null) {
+                $value = DB::table($table)->where('id', $qr->target_id)->value('floor');
+            }
+        }
+        if (is_bool($value) || !is_scalar($value) || !preg_match('/^-?\d+$/D', (string) $value)) {
+            return null;
+        }
+        $floor = (int) $value;
+        if ($floor < -32768 || $floor > 32767) {
+            return null;
+        }
+        return DB::table('routing_floors')->where('floor', $floor)->exists() ? $floor : null;
     }
 
     protected function buildI18nMap(string $entityTable, int $entityId, string $field, array $langs): array
