@@ -11,6 +11,7 @@
         <testsuite name="Feature">
             <file>tests/Feature/MultiFloorConnectorTest.php</file>
             <file>tests/Feature/PublicPlaceFloorTest.php</file>
+            <file>tests/Feature/PoiEndpointSearchTest.php</file>
         </testsuite>
     </testsuites>
     <source>
