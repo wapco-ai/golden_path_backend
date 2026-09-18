@@ -13,6 +13,9 @@ class PoiEndpointSearchTest extends TestCase
         DB::beginTransaction();
         // Run the actual deployment migration inside the existing integration DB.
         $this->migration()->up();
+        // The baseline catalog contains -1/0; keep its real POI floor FK enabled.
+        DB::statement("INSERT INTO routing_floors(floor,label,sort_order)
+            VALUES (1,'طبقه ۱',1) ON CONFLICT (floor) DO NOTHING");
     }
 
     protected function tearDown(): void
