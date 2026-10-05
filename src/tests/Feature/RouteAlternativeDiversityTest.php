@@ -160,6 +160,27 @@ class RouteAlternativeDiversityTest extends TestCase
         $this->assertSame(array_column($fixed['alternatives'],'geo'),array_column($afterDisplayEdit['alternatives'],'geo'));
     }
 
+    public function test_main_and_alternative_routes_end_with_an_arrival_at_route_m_one(): void
+    {
+        $this->buildCorridors();
+        $body = ['mode'=>'walk','gender'=>'both','origin'=>$this->origin+['type'=>'coordinate','floor'=>0],
+            'destination'=>$this->destination+['type'=>'coordinate','floor'=>0],'maxAlternatives'=>2];
+        $route = $this->postJson('/api/v1/routing/route',$body)->assertOk()->json();
+        $this->assertCount(2,$route['alternatives']);
+        foreach ([$route,...$route['alternatives']] as $candidate) {
+            $arrival = $candidate['steps'][count($candidate['steps'])-1];
+            $this->assertSame('stepArriveDestination',$arrival['type']);
+            $this->assertSame(1,$arrival['routeM']);
+            $this->assertSame(0,$arrival['floor']);
+            $this->assertSame(count($candidate['segments'])-1,$arrival['segmentId']);
+            $this->assertSame(count($candidate['steps']),$arrival['stepOrder']);
+            $this->assertCount(1,array_filter($candidate['steps'],fn($s)=>$s['type']==='stepArriveDestination'));
+            $end = $candidate['geo']['geometry']['coordinates'][count($candidate['geo']['geometry']['coordinates'])-1];
+            $this->assertEqualsWithDelta($end[0],$arrival['coord']['lon'],0.00000001);
+            $this->assertEqualsWithDelta($end[1],$arrival['coord']['lat'],0.00000001);
+        }
+    }
+
     public function test_nearby_door_choices_do_not_fill_missing_alternative_slots(): void
     {
         $this->buildCorridors(false);

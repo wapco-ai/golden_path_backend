@@ -90,6 +90,11 @@ class MultiFloorConnectorTest extends TestCase
         $this->assertSame(1,$transfers[0]['toFloor']);
         $this->assertSame(36.0,$transfers[0]['duration_s']);
         $this->assertNull($r['segments'][1]['geometry']);
+        $arrival = $r['steps'][count($r['steps'])-1];
+        $this->assertSame('stepArriveDestination',$arrival['type']);
+        $this->assertSame(1,$arrival['routeM']);
+        $this->assertSame(1,$arrival['floor']);
+        $this->assertSame(count($r['segments'])-1,$arrival['segmentId']);
     }
 
     public function test_rebuilding_node_ids_preserves_linkage_and_identical_xy_stays_on_distinct_floors(): void
@@ -205,6 +210,10 @@ class MultiFloorConnectorTest extends TestCase
         $this->assertFalse($r['multifloor']);
         $this->assertSame('LineString',$r['geo']['geometry']['type']);
         $this->assertGreaterThan(14,$r['distanceMeters']);
+        $arrival = $r['steps'][count($r['steps'])-1];
+        $this->assertSame('stepArriveDestination',$arrival['type']);
+        $this->assertSame(1,$arrival['routeM']);
+        $this->assertSame(0,$arrival['floor']);
         $body['destination']['floor']=9;
         $this->postJson('/api/v1/routing/route',$body)->assertUnprocessable();
         $body['destination']['floor']=1;

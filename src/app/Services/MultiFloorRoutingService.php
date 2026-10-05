@@ -87,7 +87,7 @@ class MultiFloorRoutingService
         $flush();
         $end = json_decode(end($edges)->to_point, true)['coordinates'];
         $steps[] = ['type'=>'stepArriveDestination','title'=>'','coord'=>['lat'=>$end[1],'lon'=>$end[0]],
-            'floor'=>(int)end($edges)->to_floor,'segmentId'=>count($segments)-1];
+            'floor'=>(int)end($edges)->to_floor,'segmentId'=>count($segments)-1,'routeM'=>1];
         foreach ($steps as $i => &$step) $step['stepOrder'] = $i + 1;
         unset($step);
         $distance = array_sum(array_column($segments,'distance_m'));
