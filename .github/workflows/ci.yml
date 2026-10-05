@@ -108,6 +108,7 @@ jobs:
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/baseline/2026-08-26/golden_path.schema.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260915_160000_multifloor_connectors.up.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260915_160100_multifloor_routing.up.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261005_170000_diverse_route_alternatives.up.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260915_203000_location_sharing.up.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260915_204000_route_history_index.up.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260917_180000_public_place_floors.up.sql
@@ -124,10 +125,12 @@ jobs:
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260917_180000_public_place_floors.down.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260915_204000_route_history_index.down.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260915_203000_location_sharing.down.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261005_170000_diverse_route_alternatives.down.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260915_160100_multifloor_routing.down.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260915_160000_multifloor_connectors.down.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260915_160000_multifloor_connectors.up.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260915_160100_multifloor_routing.up.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261005_170000_diverse_route_alternatives.up.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260915_203000_location_sharing.up.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260915_204000_route_history_index.up.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260917_180000_public_place_floors.up.sql
