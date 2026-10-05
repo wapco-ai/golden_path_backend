@@ -23,7 +23,11 @@ class DoorCrudController extends Controller
         }
         return DB::transaction(function () use ($data) {
             $point = array_merge($data['point'], ['is_open' => false]);
-            $created = $this->store(Request::create('/', 'POST', $point))->getData(true);
+            // saveInfo() schedules the single rebuild after all metadata is saved.
+            $created = $this->store(
+                Request::create('/', 'POST', $point),
+                false
+            )->getData(true);
             $id = $created['door']['id'];
             $this->saveInfo(Request::create('/', 'PUT', $data['info']), $id);
             return response()->json($created, 201);
@@ -94,7 +98,7 @@ class DoorCrudController extends Controller
         return $code;
     }
 
-    public function store(Request $request)
+    public function store(Request $request, bool $queueGraphRebuild = true)
     {
         $data = $request->validate([
             'x'              => 'required|numeric',
@@ -163,7 +167,9 @@ class DoorCrudController extends Controller
             return $row;
         });
 
-        $this->queueDoorGraphRebuild((int) $row->door_id);
+        if ($queueGraphRebuild) {
+            $this->queueDoorGraphRebuild((int) $row->door_id);
+        }
 
         if (!$row) {
             return response()->json([
@@ -1209,7 +1215,11 @@ class DoorCrudController extends Controller
             ]
         );
 
-        RebuildDoorGraphJob::dispatch($doorId);
+        // Defer dispatch itself: ShouldBeUnique acquires its database lock
+        // before the queue honors a job's ->afterCommit() flag.
+        DB::afterCommit(static function () use ($doorId): void {
+            RebuildDoorGraphJob::dispatch($doorId);
+        });
     }
 
     public function graphStatus(int $id)
