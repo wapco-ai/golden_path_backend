@@ -12,6 +12,7 @@
             <file>tests/Feature/MultiFloorConnectorTest.php</file>
             <file>tests/Feature/PublicPlaceFloorTest.php</file>
             <file>tests/Feature/PoiEndpointSearchTest.php</file>
+            <file>tests/Feature/DoorGraphDispatchTest.php</file>
         </testsuite>
     </testsuites>
     <source>
