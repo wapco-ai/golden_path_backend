@@ -10,6 +10,8 @@ use Illuminate\Validation\ValidationException;
 
 class ConnectorService
 {
+    // Only these types require shared multi-floor stops for new points.
+    // 'connection' may be an ordinary single-floor point or a shared connector.
     public const KINDS = ['stair', 'ramp', 'elevator', 'escalator'];
 
     public function candidates(array $point): array

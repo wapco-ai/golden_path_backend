@@ -12,7 +12,7 @@ class ConnectorRequest extends FormRequest
     {
         return [
             'version' => 'nullable|integer|min:1',
-            'kind' => 'required|in:stair,ramp,elevator,escalator',
+            'kind' => 'required|in:stair,ramp,elevator,escalator,connection',
             'direction' => 'required|in:both,forward,reverse',
             'wait_seconds' => 'nullable|numeric|min:0|max:3600',
             'info' => 'required|array',
