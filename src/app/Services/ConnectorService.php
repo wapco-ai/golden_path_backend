@@ -10,7 +10,7 @@ use Illuminate\Validation\ValidationException;
 
 class ConnectorService
 {
-    public const KINDS = ['stair', 'ramp', 'elevator', 'escalator'];
+    // Only these types require a shared multi-floor form for *new* points.\n    // 'connection' can be an ordinary single-floor DAP or an existing shared connector.\n    public const KINDS = ['stair', 'ramp', 'elevator', 'escalator'];
 
     public function candidates(array $point): array
     {
