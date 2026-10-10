@@ -254,4 +254,67 @@ class MultiFloorConnectorTest extends TestCase
         $this->assertSame('NO_PATH',$service->route('both','walk',0,0,$this->point,(array)$destination,'fa',0)['status']);
     }
 
+    public function test_entire_stair_can_become_shared_connection_without_losing_floor_links_or_dap_geometry(): void
+    {
+        // Generic single-floor points remain ordinary doors, not mandatory two-stop connectors.
+        $this->assertNotContains('connection', ConnectorService::KINDS);
+
+        $stair = $this->create($this->payload('stair'));
+        $this->rebuild();
+        $beforeRoute = $this->route();
+        $this->assertSame('OK', $beforeRoute['status']);
+        $this->assertCount(2, array_filter($beforeRoute['steps'], fn ($s) => $s['type'] === 'stepChangeFloor'));
+
+        $beforeStops = array_map(fn ($s) => [
+            'floor' => $s['floor'], 'door_id' => $s['door_id'],
+            'access_id' => $s['access_id'], 'area_id' => $s['area_id'],
+        ], $stair['stops']);
+        $accessIds = array_column($beforeStops, 'access_id');
+        $beforeGeometry = DB::table('door_access_points')->whereIn('id', $accessIds)
+            ->orderBy('id')->select('id')->selectRaw("encode(ST_AsEWKB(geom),'hex') AS geom_hex")->get()->toArray();
+        $beforeDoorCount = DB::table('doors')->count();
+
+        $payload = $this->payload('stair'); // Keep walk-only access and the same stop durations.
+        $payload['kind'] = 'connection';
+        $payload['info']['operational']['place_function'] = 'connection';
+        $payload['info']['basic_info']['title']['fa'] = 'نقطه اتصال چندطبقه';
+        $payload['version'] = $stair['version'];
+        $payload['stops'] = $stair['stops'];
+
+        $updated = $this->putJson('/api/v1/admin/connectors/'.$stair['id'], $payload)
+            ->assertOk()->json();
+
+        $this->assertSame($stair['id'], $updated['id']);
+        $this->assertSame('connection', $updated['kind']);
+        $this->assertSame($stair['version'] + 1, $updated['version']);
+        $afterStops = array_map(fn ($s) => [
+            'floor' => $s['floor'], 'door_id' => $s['door_id'],
+            'access_id' => $s['access_id'], 'area_id' => $s['area_id'],
+        ], $updated['stops']);
+        $this->assertSame($beforeStops, $afterStops);
+        $this->assertSame($beforeDoorCount, DB::table('doors')->count());
+        $this->assertEquals($beforeGeometry, DB::table('door_access_points')->whereIn('id', $accessIds)
+            ->orderBy('id')->select('id')->selectRaw("encode(ST_AsEWKB(geom),'hex') AS geom_hex")->get()->toArray());
+
+        foreach ($updated['stops'] as $stop) {
+            $this->getJson('/api/v1/doors/'.$stop['door_id'].'/info')->assertOk()
+                ->assertJsonPath('connector.id', $stair['id'])
+                ->assertJsonPath('connector.kind', 'connection')
+                ->assertJsonPath('operational.place_function', 'connection')
+                ->assertJsonPath('operational.transport_modes', ['walk']);
+        }
+
+        // Rebuilding is required before a newly edited connector becomes available.
+        $this->assertSame('NO_PATH', $this->route()['status']);
+        $this->rebuild();
+        $afterRoute = $this->route();
+        $this->assertSame('OK', $afterRoute['status']);
+        $transfers = array_values(array_filter($afterRoute['steps'], fn ($s) => $s['type'] === 'stepChangeFloor'));
+        $this->assertCount(2, $transfers); // A generic connector links adjacent landings, unlike an elevator.
+        $this->assertSame([-1, 0], array_column($transfers, 'fromFloor'));
+        $this->assertSame([0, 1], array_column($transfers, 'toFloor'));
+        $this->assertSame(['connection', 'connection'], array_column($transfers, 'connectorType'));
+        $this->assertSame('NO_PATH', $this->route(-1, 1, 'wheelchair')['status']);
+    }
+
 }
