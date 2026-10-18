@@ -35,7 +35,7 @@ class CategoryAdminController extends Controller
      */
     public function store(CategoryStoreRequest $request)
     {
-        $payload = $this->extractPayload($request);
+        $payload = $request->safe()->except('image');
         $image = $request->file('image');
         $created = $this->svc->create($payload, $image);
         return response()->json($created, 201);
@@ -46,7 +46,7 @@ class CategoryAdminController extends Controller
      */
     public function update(int $id, CategoryUpdateRequest $request)
     {
-        $payload = $this->extractPayload($request);
+        $payload = $request->safe()->except('image');
         $image = $request->file('image');
         return response()->json($this->svc->update($id, $payload, $image));
     }
@@ -107,22 +107,4 @@ class CategoryAdminController extends Controller
         return response()->json(null, 204);
     }
 
-    // ---------------------
-    // Helpers
-    // ---------------------
-
-    private function extractPayload(Request $request): array
-    {
-        // When multipart is used, UI sends payload as JSON in `payload`
-        $payloadStr = $request->input('payload');
-        if (is_string($payloadStr) && trim($payloadStr) !== '') {
-            $decoded = json_decode($payloadStr, true);
-            if (is_array($decoded)) {
-                return $decoded;
-            }
-        }
-
-        // Otherwise take JSON body as-is
-        return $request->all();
-    }
 }
