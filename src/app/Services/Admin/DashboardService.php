@@ -79,105 +79,145 @@ class DashboardService
         ];
     }
 
-    /**
-     * نوتیفیکیشن‌ها
-     * فعلاً read/unread واقعی نداریم (اگر جدول داشتی می‌سازیم/وصل می‌کنیم)
-     */
-    public function notifications(int $limit = 10, bool $unreadOnly = false): array
+    /** The feed is derived from source rows; only per-admin acknowledgements persist. */
+    public function notifications(int $adminUserId, int $limit = 10, bool $unreadOnly = false, bool $includeMeta = false): array
     {
-        // طبق کانتکست فرانت: خروجی باید "آرایه خام" باشد، بدون wrapper
-        // read/unread واقعی نداریم -> فعلاً همه false (اگر داری بعداً وصلش می‌کنیم)
-        // createdAt باید ISO 8601 باشد و JS بتواند parse کند.
+        $sources = $this->notificationSourcesSql();
+        // Count and page share one statement snapshot. Filter before LIMIT so
+        // older unread rows are not hidden behind a page of read notifications.
+        $row = DB::selectOne(<<<SQL
+            WITH sources AS ({$sources}),
+            feed AS (
+                SELECT sources.*, receipts.read_at IS NOT NULL AS is_read
+                FROM sources
+                LEFT JOIN public.admin_notification_reads AS receipts
+                    ON receipts.admin_user_id = ?::bigint
+                    AND receipts.notification_type = sources.notification_type
+                    AND receipts.entity_id = sources.entity_id
+            ),
+            page AS (
+                SELECT * FROM feed
+                WHERE (?::boolean = false OR is_read = false)
+                ORDER BY created_at DESC, notification_type ASC, entity_id DESC
+                LIMIT ?
+            )
+            SELECT
+                (SELECT COUNT(*) FROM feed WHERE is_read = false) AS unread_count,
+                COALESCE((
+                    SELECT jsonb_agg(jsonb_build_object(
+                        'id', notification_type || ':' || entity_id::text,
+                        'type', notification_type,
+                        'title', title,
+                        'message', message,
+                        'entityId', entity_id,
+                        'createdAt', to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+                        'read', is_read
+                    ) ORDER BY created_at DESC, notification_type ASC, entity_id DESC)
+                    FROM page
+                ), '[]'::jsonb) AS items
+            SQL, [$adminUserId, $unreadOnly, $limit]);
 
-        $items = [];
+        $items = json_decode($row->items, true, 512, JSON_THROW_ON_ERROR);
 
-        // 1) new_user
-        $latestUsers = DB::table('users')
-            ->orderByDesc('created_at')
-            ->limit($limit)
-            ->get(['id', 'name', 'created_at']);
+        return $includeMeta ? ['items' => $items, 'unreadCount' => (int) $row->unread_count] : $items;
+    }
 
-        foreach ($latestUsers as $u) {
-            $entityId = (int)$u->id;
-            $type = 'new_user';
-
-            $createdAt = $u->created_at
-                ? \Carbon\Carbon::parse($u->created_at)->utc()->toIso8601ZuluString()
-                : null;
-
-            $items[] = [
-                // id ترجیحی است؛ برای جلوگیری از تداخل typeها، از typeCode*1e9 + entityId می‌سازیم
-                'id'        => 1000000000 + $entityId,
-                'type'      => $type,
-                'title'     => 'ثبت‌نام جدید',
-                'message'   => $u->name ? "{$u->name} ثبت‌نام کرد" : "کاربر جدید ثبت‌نام کرد",
-                'entityId'  => $entityId,
-                'createdAt' => $createdAt,
-                'read'      => false,
-            ];
+    /** Acknowledge only the explicitly requested, currently existing source rows. */
+    public function markNotificationsRead(int $adminUserId, array $ids): array
+    {
+        $values = [];
+        $bindings = [];
+        foreach ($ids as $id) {
+            [$type, $entityId] = explode(':', $id, 2);
+            $values[] = '(?::text, ?::bigint)';
+            array_push($bindings, $type, $entityId);
         }
 
-        // 2) new_comment (user_feedbacks)
-        $latestComments = DB::table('user_feedbacks')
-            ->orderByDesc('created_at')
-            ->limit($limit)
-            ->get(['id', 'title', 'body', 'created_at']);
+        $sources = $this->notificationSourcesSql();
+        $requested = implode(', ', $values);
+        DB::statement(<<<SQL
+            WITH sources AS ({$sources}),
+            requested(notification_type, entity_id) AS (VALUES {$requested})
+            INSERT INTO public.admin_notification_reads (admin_user_id, notification_type, entity_id)
+            SELECT ?::bigint, sources.notification_type, sources.entity_id
+            FROM sources
+            INNER JOIN requested
+                ON requested.notification_type = sources.notification_type
+                AND requested.entity_id = sources.entity_id
+            WHERE true
+            ORDER BY sources.notification_type ASC, sources.entity_id ASC
+            ON CONFLICT (admin_user_id, notification_type, entity_id) DO NOTHING
+            SQL, [...$bindings, $adminUserId]);
 
+        return ['success' => true, 'unreadCount' => $this->unreadNotificationCount($adminUserId)];
+    }
 
-        foreach ($latestComments as $c) {
-            $msg = $c->title ?: ($c->body ? mb_substr($c->body, 0, 80) : 'یک دیدگاه جدید ثبت شد');
+    /** One INSERT SELECT snapshots all existing sources, including those beyond the page limit. */
+    public function markAllNotificationsRead(int $adminUserId): array
+    {
+        $sources = $this->notificationSourcesSql();
+        DB::statement(<<<SQL
+            WITH sources AS ({$sources})
+            INSERT INTO public.admin_notification_reads (admin_user_id, notification_type, entity_id)
+            SELECT ?::bigint, notification_type, entity_id FROM sources WHERE true
+            ORDER BY notification_type ASC, entity_id ASC
+            ON CONFLICT (admin_user_id, notification_type, entity_id) DO NOTHING
+            SQL, [$adminUserId]);
 
-            $items[] = [
-                'type'      => 'new_comment',
-                'title'     => 'دیدگاه جدید',
-                'message'   => $msg,
-                'entityId'  => (int)$c->id,
-                'createdAt' => Carbon::parse($c->created_at)->toDateTimeString(),
-                'read'      => false,
-            ];
-        }
+        return ['success' => true, 'unreadCount' => $this->unreadNotificationCount($adminUserId)];
+    }
 
+    private function unreadNotificationCount(int $adminUserId): int
+    {
+        $sources = $this->notificationSourcesSql();
+        $row = DB::selectOne(<<<SQL
+            WITH sources AS ({$sources})
+            SELECT COUNT(*) AS unread_count FROM sources
+            WHERE NOT EXISTS (
+                SELECT 1 FROM public.admin_notification_reads AS receipts
+                WHERE receipts.admin_user_id = ?::bigint
+                    AND receipts.notification_type = sources.notification_type
+                    AND receipts.entity_id = sources.entity_id
+            )
+            SQL, [$adminUserId]);
 
-        // 3) support_message (support_feedbacks اگر وجود داشت)
+        return (int) $row->unread_count;
+    }
+
+    private function notificationSourcesSql(): string
+    {
+        // users.created_at stores naive UTC; the other source timestamps carry
+        // zones. Normalize to timestamptz before ordering or formatting them.
+        // Undated rows are not new events and receive no invented timestamp.
+        $sql = <<<'SQL'
+            SELECT 'new_user'::text AS notification_type, id AS entity_id,
+                created_at AT TIME ZONE 'UTC' AS created_at,
+                'ثبت‌نام جدید'::text AS title,
+                CASE WHEN COALESCE(name, '') <> '' THEN name || ' ثبت‌نام کرد'
+                    ELSE 'کاربر جدید ثبت‌نام کرد' END AS message
+            FROM public.users
+            WHERE is_admin = false AND created_at IS NOT NULL AND id > 0
+            UNION ALL
+            SELECT 'new_comment'::text, id, created_at,
+                'دیدگاه جدید'::text,
+                COALESCE(NULLIF(title, ''), NULLIF(LEFT(body, 80), ''), 'یک دیدگاه جدید ثبت شد')
+            FROM public.user_feedbacks
+            WHERE created_at IS NOT NULL AND id > 0
+            SQL;
+
         if ($this->tableExists('support_feedbacks')) {
-            $latestSupport = DB::table('support_feedbacks')
-                ->orderByDesc('created_at')
-                ->limit($limit)
-                ->get(['id', 'subject', 'created_at']);
+            $sql .= <<<'SQL'
 
-            foreach ($latestSupport as $s) {
-                $entityId = (int)$s->id;
-                $type = 'support_message';
-
-                $createdAt = $s->created_at
-                    ? \Carbon\Carbon::parse($s->created_at)->utc()->toIso8601ZuluString()
-                    : null;
-
-                $subject = trim((string)($s->subject ?? 'پیام جدید'));
-                $msg = "کاربر: {$subject}";
-
-                $items[] = [
-                    'id'        => 3000000000 + $entityId,
-                    'type'      => $type,
-                    'title'     => 'پیام پشتیبانی',
-                    'message'   => $msg,
-                    'entityId'  => $entityId,
-                    'createdAt' => $createdAt,
-                    'read'      => false,
-                ];
-            }
+                UNION ALL
+                SELECT 'support_message'::text, id, created_at,
+                    'پیام پشتیبانی'::text,
+                    'کاربر: ' || TRIM(COALESCE(subject, 'پیام جدید'))
+                FROM public.support_feedbacks
+                WHERE created_at IS NOT NULL AND id > 0
+                SQL;
         }
 
-        // مرتب‌سازی نزولی بر اساس createdAt
-        usort($items, fn($a, $b) => strcmp((string)$b['createdAt'], (string)$a['createdAt']));
-
-        // unreadOnly: چون read واقعی نداریم فعلاً اثری ندارد (اما ساختار پارامتر حفظ می‌شود)
-        if ($unreadOnly) {
-            $items = array_values(array_filter($items, fn($x) => empty($x['read'])));
-        }
-
-        // خروجی: آرایه خام
-        return array_slice($items, 0, $limit);
+        return $sql;
     }
 
 
