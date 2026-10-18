@@ -18,7 +18,9 @@ existing behavior; this field is history, not an automatic unlock deadline.
 ## Registration-date filter
 
 `GET /api/v1/admin/users` accepts optional `startDate` and `endDate` in Gregorian
-`YYYY-MM-DD` format. Dates represent calendar days in `Asia/Tehran`. The start is
+`YYYY-MM-DD` format, from `0001-01-02` onward. This minimum keeps converted UTC
+bounds out of unsupported PostgreSQL year zero. Dates represent calendar days
+in `Asia/Tehran`. The start is
 inclusive and the end includes its entire local day, implemented as an exclusive
 upper bound at the next local midnight. The database compares the corresponding
 UTC bounds with the existing naive-UTC `users.created_at` column.

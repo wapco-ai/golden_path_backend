@@ -29,6 +29,10 @@ class SignedUserRequestValidationTest extends TestCase
     public static function invalidFilters(): array
     {
         return [
+            'year zero start' => [['startDate' => '0000-01-01'], 'startDate'],
+            'year zero end' => [['endDate' => '0000-12-31'], 'endDate'],
+            'UTC year underflow start' => [['startDate' => '0001-01-01'], 'startDate'],
+            'consistent earliest end' => [['endDate' => '0001-01-01'], 'endDate'],
             [['startDate' => '2026-02-30'], 'startDate'],
             [['endDate' => '2026-2-01'], 'endDate'],
             [['startDate' => '2026-10-18T00:00:00Z'], 'startDate'],
@@ -61,6 +65,9 @@ class SignedUserRequestValidationTest extends TestCase
             [[], null, null],
             [['startDate' => '2026-10-18'], '2026-10-18', null],
             [['endDate' => '2026-10-18'], null, '2026-10-18'],
+            [['startDate' => '0001-01-02'], '0001-01-02', null],
+            [['endDate' => '0001-01-02'], null, '0001-01-02'],
+            [['startDate' => '0001-01-02', 'endDate' => '0001-01-02'], '0001-01-02', '0001-01-02'],
         ];
     }
 

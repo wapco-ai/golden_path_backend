@@ -196,6 +196,15 @@ class SignedUserAdminTest extends TestCase
         $this->assertSame(2, $result['meta']['total']);
     }
 
+    public function test_earliest_supported_calendar_date_has_valid_postgresql_utc_bounds(): void
+    {
+        $id = $this->user();
+        $startOnly = $this->listing(['startDate' => '0001-01-02']);
+        $this->assertSame([$id], array_column($startOnly['data'], 'id'));
+        $this->assertSame(0, $this->listing(['endDate' => '0001-01-02'])['meta']['total']);
+        $this->assertSame(0, $this->listing(['startDate' => '0001-01-02', 'endDate' => '0001-01-02'])['meta']['total']);
+    }
+
     public function test_admin_accounts_are_excluded_from_details_and_status_updates(): void
     {
         $id = $this->user(['is_admin' => true, 'status' => 'disabled', 'is_active' => false]);
