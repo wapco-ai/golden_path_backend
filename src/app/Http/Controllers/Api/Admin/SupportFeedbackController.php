@@ -22,7 +22,7 @@ class SupportFeedbackController extends Controller
 
         $limit = $data['limit'] ?? 20;
 
-        $q = SupportFeedback::with('user:id,name,phone')
+        $q = SupportFeedback::with('user:id,name,mobile')
             ->when(!empty($data['status']), fn($qq) => $qq->where('status', $data['status']))
             ->when(!empty($data['q']), function ($qq) use ($data) {
                 $term = $data['q'];
@@ -32,6 +32,7 @@ class SupportFeedbackController extends Controller
                 });
             })
             ->orderByDesc('created_at')
+            ->orderByDesc('id')
             ->paginate($limit);
 
         return response()->json([
@@ -40,7 +41,7 @@ class SupportFeedbackController extends Controller
                 'user' => $x->user ? [
                     'id' => $x->user->id,
                     'name' => $x->user->name,
-                    'phone' => $x->user->phone ?? null,
+                    'phone' => $x->user->mobile ?? null,
                 ] : null,
                 'subject' => $x->subject,
                 'message' => $x->message,
@@ -75,6 +76,29 @@ class SupportFeedbackController extends Controller
             'message' => 'وضعیت به‌روزرسانی شد.',
             'id' => $row->id,
             'status' => $row->status,
+        ]);
+    }
+
+    /** DELETE /api/v1/admin/support-feedbacks/{id} */
+    public function destroy(string $id)
+    {
+        // Do not cast an untrusted route ID to an integer or send it to
+        // PostgreSQL before checking its positive signed-bigint range.
+        $id = ltrim($id, '0');
+        if ($id === '' || !ctype_digit($id) || strlen($id) > 19
+            || (strlen($id) === 19 && strcmp($id, '9223372036854775807') > 0)) {
+            return response()->json(['success' => false, 'message' => 'بازخورد یافت نشد.'], 404);
+        }
+
+        $deleted = SupportFeedback::query()->whereKey($id)->delete();
+        if (!$deleted) {
+            return response()->json(['success' => false, 'message' => 'بازخورد یافت نشد.'], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'id' => (int) $id,
+            'message' => 'بازخورد حذف شد.',
         ]);
     }
 }

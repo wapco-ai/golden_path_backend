@@ -19,6 +19,7 @@
             <file>tests/Feature/CulturalLandmarkMediaTest.php</file>
             <file>tests/Feature/CategoryAdminWriteTest.php</file>
             <file>tests/Feature/SignedUserAdminTest.php</file>
+            <file>tests/Feature/SupportFeedbackAdminTest.php</file>
         </testsuite>
     </testsuites>
     <source>
