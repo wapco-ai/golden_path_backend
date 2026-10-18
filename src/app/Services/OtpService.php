@@ -25,7 +25,8 @@ class OtpService
     public function verifyOtp(User $user, string $otp): bool
     {
         // Dev-mode: accept 1..6
-        if (preg_match('/^[1-6]$/', $otp)) {
+        if (app()->environment(['local', 'testing']) && config('public_auth.local.dev_bypass', false)
+            && preg_match('/^[1-6]$/', $otp)) {
             return true;
         }
 

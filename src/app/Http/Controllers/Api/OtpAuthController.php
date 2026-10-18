@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Exceptions\PublicAuthException;
 use App\Http\Requests\OtpRequest;
 use App\Http\Requests\OtpVerifyRequest;
 use App\Http\Resources\UserResource;
@@ -11,7 +12,9 @@ use App\Models\UserRefreshToken;
 use App\Services\OtpService;
 use App\Services\ProfileService;
 use App\Services\PublicJwtService;
+use App\Services\RazaviAuthService;
 use App\Support\ApiError;
+use Illuminate\Support\Facades\DB;
 
 class OtpAuthController extends Controller
 {
@@ -20,11 +23,23 @@ class OtpAuthController extends Controller
     public function __construct(
         protected OtpService $otpService,
         protected PublicJwtService $jwt,
-        protected ProfileService $profiles
+        protected ProfileService $profiles,
+        protected RazaviAuthService $razavi
     ) {}
 
     public function requestOtp(OtpRequest $request)
     {
+        if (config('public_auth.provider') === 'razavi') {
+            try {
+                return response()->json($this->razavi->requestOtp($request->validated()['phone']));
+            } catch (PublicAuthException $exception) {
+                return $this->providerError($exception);
+            }
+        }
+        if (config('public_auth.provider') !== 'local') {
+            return $this->error('AUTH_PROVIDER_UNAVAILABLE', 'سرویس احراز هویت پیکربندی نشده است.', 503);
+        }
+
         $phone = $request->validated()['phone'];
 
         // find or create user with phone only
@@ -48,7 +63,7 @@ class OtpAuthController extends Controller
         // ]);
 
         $diff = $user->otp_last_sent_at
-            ? now()->diffInSeconds($user->otp_last_sent_at, false)
+            ? $user->otp_last_sent_at->diffInSeconds(now(), false)
             : null;
 
         if ($diff !== null && $diff >= 0 && $diff < 30) {
@@ -75,13 +90,15 @@ class OtpAuthController extends Controller
         $user->save();
 
         // چون SMS ندارید، فعلاً در dev می‌توانیم کد را برگردانیم (فقط dev!)
-        $debug = (bool) env('OTP_RETURN_IN_RESPONSE', true);
+        $debug = app()->environment(['local', 'testing']) && (bool) config('public_auth.local.return_in_response', false);
 
         return response()->json([
             'ok' => true,
             'message' => 'OTP_SENT',
             'devOtp' => $debug ? $otp : null,
             'expiresIn' => (int) env('OTP_TTL_SECONDS', 120),
+            'retryAfter' => 30,
+            'otpLength' => 6,
         ]);
     }
 
@@ -90,6 +107,23 @@ class OtpAuthController extends Controller
         $phone = $request->validated()['phone'];
         $otp   = $request->validated()['otp'];
 
+        if (config('public_auth.provider') === 'razavi') {
+            try {
+                $user = $this->razavi->verifyOtp($phone, $otp);
+            } catch (PublicAuthException $exception) {
+                return $this->providerError($exception);
+            }
+        } elseif (config('public_auth.provider') === 'local') {
+            return $this->verifyLocalOtp($request, $phone, $otp);
+        } else {
+            return $this->error('AUTH_PROVIDER_UNAVAILABLE', 'سرویس احراز هویت پیکربندی نشده است.', 503);
+        }
+
+        return $this->issueSession($request, $user);
+    }
+
+    private function verifyLocalOtp(OtpVerifyRequest $request, string $phone, string $otp)
+    {
         $user = User::where('mobile', $phone)->first();
         if (!$user) return $this->error('USER_NOT_FOUND', 'کاربر یافت نشد.', 404);
 
@@ -98,7 +132,7 @@ class OtpAuthController extends Controller
             return $this->error('ACCOUNT_LOCKED', 'حساب قفل است.', 423);
         }
 
-        $devBypass = (bool) env('OTP_DEV_BYPASS', true);
+        $devBypass = app()->environment(['local', 'testing']) && (bool) config('public_auth.local.dev_bypass', false);
         if (preg_match('/^[1-6]$/', $otp) && !$devBypass) {
             return $this->error('INVALID_OTP', 'کد نامعتبر است.', 400);
         }
@@ -113,6 +147,33 @@ class OtpAuthController extends Controller
 
             return $this->error('INVALID_OTP', 'کد نامعتبر یا منقضی است.', 400);
         }
+
+        return $this->issueSession($request, $user);
+    }
+
+    private function issueSession(OtpVerifyRequest $request, User $user)
+    {
+        return DB::transaction(function () use ($request, $user) {
+            // Re-read under a row lock: an administrator may have disabled or
+            // locked the local account while the provider calls were in flight.
+            $current = User::whereKey($user->id)->lockForUpdate()->first();
+            if (!$current || $current->is_admin) {
+                return $this->error('UNAUTHORIZED', 'ورود به این حساب مجاز نیست.', 403);
+            }
+            if ($current->status !== 'active' || !$current->is_active
+                || ($current->locked_until && now()->lessThan($current->locked_until))) {
+                return $this->error('ACCOUNT_LOCKED', 'حساب قفل یا غیرفعال است.', 423);
+            }
+
+            return $this->createSession($request, $current);
+        });
+    }
+
+    private function createSession(OtpVerifyRequest $request, User $user)
+    {
+        // Consume any legacy local code as well as the provider challenge.
+        $user->otp_hash = null;
+        $user->otp_expires_at = null;
 
         // reset fail counters on success
         $user->failed_login_attempts = 0;
@@ -149,4 +210,21 @@ class OtpAuthController extends Controller
             'user' => (new UserResource($user, $completed))->toArray($request),
         ]);
     }
+
+    private function providerError(PublicAuthException $exception)
+    {
+        $payload = [
+            'code' => $exception->errorCode,
+            'message' => $exception->getMessage(),
+            'errors' => (object) [],
+        ];
+        $headers = [];
+        if ($exception->retryAfter !== null) {
+            $payload['retryAfter'] = $exception->retryAfter;
+            $headers['Retry-After'] = (string) $exception->retryAfter;
+        }
+
+        return response()->json($payload, $exception->httpStatus, $headers);
+    }
+
 }

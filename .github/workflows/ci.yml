@@ -82,6 +82,9 @@ jobs:
       - name: Registered-user status and date validation contracts (no database server)
         run: vendor/bin/phpunit tests/Feature/SignedUserRequestValidationTest.php
 
+      - name: Employer direct OTP authentication contracts (isolated SQLite, fake HTTP)
+        run: vendor/bin/phpunit -c phpunit.xml tests/Feature/RazaviDirectAuthTest.php
+
       - name: Admin notification read and list validation contracts (no database server)
         run: vendor/bin/phpunit tests/Feature/DashboardNotificationRequestValidationTest.php
 
@@ -131,6 +134,7 @@ jobs:
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261018_200000_category_created_at.up.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261018_220000_user_manual_activation_at.up.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261018_230000_admin_notification_reads.up.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261019_000000_user_auth_identities.up.sql
       - run: composer install --no-interaction --prefer-dist --no-progress --no-scripts
         working-directory: src
       - name: Real database, HTTP and routing tests
@@ -141,6 +145,7 @@ jobs:
         env:
           PGPASSWORD: connector_test_only
         run: |
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261019_000000_user_auth_identities.down.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261018_230000_admin_notification_reads.down.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261018_220000_user_manual_activation_at.down.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261018_200000_category_created_at.down.sql
@@ -167,3 +172,4 @@ jobs:
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261018_200000_category_created_at.up.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261018_220000_user_manual_activation_at.up.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261018_230000_admin_notification_reads.up.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261019_000000_user_auth_identities.up.sql
