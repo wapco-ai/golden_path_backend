@@ -206,6 +206,130 @@ class RazaviDirectAuthTest extends TestCase
     }
 
     #[DataProvider('phoneAliases')]
+    public function test_unverified_signup_cannot_poison_a_phone_before_its_owner_verifies_otp(string $phone): void
+    {
+        $this->postJson('/api/v1/users', [
+            'phone' => $phone,
+            'fullName' => 'نام ثبت شده بدون احراز هویت',
+            'email' => 'unverified@example.test',
+        ])->assertForbidden()->assertJsonPath('code', 'REGISTRATION_DISABLED');
+
+        $this->assertDatabaseCount('users', 0);
+        $this->assertDatabaseCount('user_auth_identities', 0);
+        $this->assertNoSession();
+        Http::assertNothingSent();
+
+        // Rejecting the legacy endpoint must not reserve an alias or block its real owner.
+        $this->fakeSuccess();
+        $this->requestOtp()->assertOk();
+        $login = $this->verifyOtp()->assertOk();
+        $user = User::sole();
+        $this->assertSame($user->id, $login->json('user.id'));
+        $this->assertSame(self::PHONE, $user->mobile);
+        $this->assertNotSame('unverified@example.test', $user->email);
+        $this->assertDatabaseCount('user_auth_identities', 1);
+        $this->assertDatabaseHas('user_auth_identities', ['subject' => self::SUBJECT, 'user_id' => $user->id]);
+        $this->assertDatabaseCount('user_refresh_tokens', 1);
+        Http::assertSentCount(3);
+    }
+
+    public function test_provider_registration_is_disabled_before_legacy_payload_validation(): void
+    {
+        $this->postJson('/api/v1/users', [])
+            ->assertForbidden()->assertJsonPath('code', 'REGISTRATION_DISABLED');
+        $this->postJson('/api/v1/users', ['phone' => [], 'email' => 'invalid'])
+            ->assertForbidden()->assertJsonPath('code', 'REGISTRATION_DISABLED');
+
+        $this->assertDatabaseCount('users', 0);
+        $this->assertDatabaseCount('user_auth_identities', 0);
+        $this->assertNoSession();
+        Http::assertNothingSent();
+    }
+
+    public function test_unknown_provider_cannot_enable_legacy_registration(): void
+    {
+        config(['public_auth.provider' => 'typo']);
+
+        $this->postJson('/api/v1/users', [
+            'phone' => self::PHONE,
+            'fullName' => 'نام ثبت شده بدون احراز هویت',
+        ])->assertForbidden()->assertJsonPath('code', 'REGISTRATION_DISABLED');
+
+        $this->assertDatabaseCount('users', 0);
+        $this->assertDatabaseCount('user_auth_identities', 0);
+        $this->assertNoSession();
+        Http::assertNothingSent();
+    }
+
+    public function test_explicit_local_provider_preserves_legacy_registration(): void
+    {
+        config(['public_auth.provider' => 'local']);
+
+        $response = $this->postJson('/api/v1/users', [
+            'phone' => self::PHONE,
+            'fullName' => 'نام تست محلی',
+            'email' => 'legacy@example.test',
+            'nationalId' => '1234567890',
+        ])->assertCreated()->assertJsonPath('phone', self::PHONE)
+            ->assertJsonPath('fullName', 'نام تست محلی');
+
+        $this->assertDatabaseCount('users', 1);
+        $this->assertDatabaseHas('users', [
+            'id' => $response->json('id'), 'mobile' => self::PHONE,
+            'name' => 'نام تست محلی', 'email' => 'legacy@example.test', 'is_admin' => false,
+        ]);
+        $this->assertDatabaseCount('user_auth_identities', 0);
+        $this->assertNoSession();
+        Http::assertNothingSent();
+    }
+
+    public function test_signup_aliases_cannot_duplicate_a_verified_account_and_authenticated_profile_update_still_works(): void
+    {
+        $user = $this->user();
+        $this->identity($user);
+        $before = $user->fresh()->getAttributes();
+
+        foreach (self::phoneAliases() as [$phone]) {
+            $this->postJson('/api/v1/users', [
+                'phone' => $phone,
+                'fullName' => 'نام ثبت شده بدون احراز هویت',
+                'email' => 'unverified@example.test',
+            ])->assertForbidden()->assertJsonPath('code', 'REGISTRATION_DISABLED');
+        }
+
+        $this->assertSame($before, $user->fresh()->getAttributes());
+        $this->assertDatabaseCount('users', 1);
+        $this->assertDatabaseCount('user_auth_identities', 1);
+        $this->assertNoSession();
+        Http::assertNothingSent();
+
+        $this->fakeSuccess();
+        $this->requestOtp()->assertOk();
+        $login = $this->verifyOtp()->assertOk()->assertJsonPath('user.id', $user->id);
+        $this->withHeader('Authorization', 'Bearer '.$login->json('accessToken'))
+            ->patchJson('/api/v1/users/me', [
+                'firstName' => 'محمد رضا',
+                'lastName' => 'حسینی',
+                'birthDate' => '2000-01-01',
+                'gender' => 'male',
+                'preferences' => ['language' => 'fa'],
+            ])->assertOk()->assertJsonPath('id', $user->id)
+            ->assertJsonPath('fullName', 'محمد رضا حسینی')
+            ->assertJsonPath('phone', self::PHONE);
+
+        $this->assertDatabaseCount('users', 1);
+        $this->assertDatabaseCount('user_auth_identities', 1);
+        $this->assertDatabaseCount('user_refresh_tokens', 1);
+        $this->assertDatabaseHas('users', [
+            'id' => $user->id, 'mobile' => self::PHONE,
+            'first_name' => 'محمد رضا', 'last_name' => 'حسینی',
+            'email' => $before['email'],
+        ]);
+        $this->assertDatabaseHas('user_auth_identities', ['subject' => self::SUBJECT, 'user_id' => $user->id]);
+        Http::assertSentCount(3);
+    }
+
+    #[DataProvider('phoneAliases')]
     public function test_existing_phone_alias_preserves_local_identity_and_profile(string $storedPhone): void
     {
         $user = $this->user(['mobile' => $storedPhone]);

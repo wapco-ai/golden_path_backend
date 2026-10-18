@@ -180,13 +180,8 @@ class RazaviAuthService
         // Legacy registration accepted formatted mobiles. Match using the same
         // digits/format normalization before applying local account controls;
         // otherwise a disabled historical account could get an active duplicate.
-        $digits = '۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩';
         if (DB::connection()->getDriverName() === 'pgsql') {
-            $expression = 'regexp_replace(translate(mobile, ?, ?), ?, \'\', \'g\')';
-            // PostgreSQL's locale-based \s omits some Unicode spaces that PHP's
-            // Unicode normalizer accepts, including NBSP. List them explicitly.
-            $unicodeSpaces = "\u{0085}\u{00A0}\u{1680}\u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\u{200A}\u{2028}\u{2029}\u{202F}\u{205F}\u{3000}";
-            $bindings = [$digits, '01234567890123456789', '[\s()\-'.$unicodeSpaces.']+'];
+            $expression = IranianMobile::postgresStorageExpression();
         } elseif (DB::connection()->getDriverName() === 'sqlite') {
             // SQLite has no translate/regexp_replace. Its deterministic SQL
             // function uses the exact same canonicalization as request input.
@@ -205,7 +200,7 @@ class RazaviAuthService
         $aliases = [$mobile, '+98'.$national, '98'.$national, '0098'.$national, $national];
         $placeholders = implode(', ', array_fill(0, count($aliases), '?'));
 
-        return User::whereRaw($expression.' IN ('.$placeholders.')', [...$bindings, ...$aliases]);
+        return User::whereRaw($expression.' IN ('.$placeholders.')', $aliases);
     }
 
     private function send(string $method, string $path, array $query = [], ?string $bearer = null, bool $verification = false): array

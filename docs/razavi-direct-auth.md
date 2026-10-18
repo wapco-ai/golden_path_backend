@@ -2,6 +2,8 @@
 
 Public OTP login uses the employer's Razavi auth service. Nasim and administrator
 authentication are outside this change.
+The selected Swagger environment is **Test Server**:
+`https://haram-api-dev.razavi.ir/auth` (without a trailing slash).
 
 ## Request contract
 
@@ -110,6 +112,21 @@ OTP for controlled environments; development code responses and bypass require
 both local/testing environment and explicit opt-in. Provider failures never
 activate that alternative.
 
+In Razavi mode, the legacy public `POST /api/v1/users` endpoint returns
+`403 REGISTRATION_DISABLED` before payload validation or writes. Account creation
+occurs only inside successful employer identity verification, so an unauthenticated
+caller cannot reserve phone aliases and block their owner. Existing frontend
+profile completion uses authenticated `PATCH /api/v1/users/me` and remains
+available. Legacy creation remains available only with the explicitly selected
+local provider.
+
+PostgreSQL uses the nonunique `users_mobile_auth_lookup_idx` functional index for
+normalized phone matching. The query and Laravel migration share one fixed SQL
+expression; the equivalent versioned SQL keeps the same expression. Fixed
+normalization constants let generic prepared plans use the index. Existing
+equivalent phone rows remain unchanged and still trigger ambiguity rejection.
+The schema rollback removes this index together with identity mappings.
+
 ## Verification
 
 `src/tests/Feature/RazaviDirectAuthTest.php` uses an isolated SQLite schema and
@@ -117,3 +134,6 @@ activate that alternative.
 upstream contract, identity checks, local session behavior and failure paths.
 Identity migration and SQL roundtrip checks run separately against an isolated
 PostgreSQL database. No live employer endpoint is needed for automated checks.
+`RazaviAuthPostgresTest` checks the production expression with formatted
+disabled/duplicate accounts and verifies index use with 20,000 user fixtures and
+a generic prepared plan, without forcing sequential scans off.

@@ -22,6 +22,7 @@
             <file>tests/Feature/SupportFeedbackAdminTest.php</file>
             <file>tests/Feature/DashboardNotificationAdminTest.php</file>
             <file>tests/Feature/DashboardRecentUsersAdminTest.php</file>
+            <file>tests/Feature/RazaviAuthPostgresTest.php</file>
         </testsuite>
     </testsuites>
     <source>

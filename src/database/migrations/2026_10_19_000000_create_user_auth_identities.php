@@ -1,7 +1,9 @@
 <?php
 
+use App\Support\IranianMobile;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -19,10 +21,16 @@ return new class extends Migration
             $table->unique(['provider', 'issuer', 'subject'], 'user_auth_identity_subject_unique');
             $table->unique(['provider', 'issuer', 'user_id'], 'user_auth_identity_user_unique');
         });
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            DB::statement('CREATE INDEX IF NOT EXISTS users_mobile_auth_lookup_idx ON public.users (('.IranianMobile::postgresStorageExpression().'))');
+        }
     }
 
     public function down(): void
     {
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            DB::statement('DROP INDEX IF EXISTS public.users_mobile_auth_lookup_idx');
+        }
         Schema::dropIfExists('user_auth_identities');
     }
 };

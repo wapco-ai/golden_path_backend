@@ -3,9 +3,26 @@
 namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Http\Exceptions\HttpResponseException;
 
 class UserStoreRequest extends FormRequest
 {
+    public function authorize(): bool
+    {
+        // Employer verification is the only account-creation path in Razavi
+        // mode. Reject legacy pre-registration before validation or any writes.
+        return config('public_auth.provider') === 'local';
+    }
+
+    protected function failedAuthorization(): void
+    {
+        throw new HttpResponseException(response()->json([
+            'code' => 'REGISTRATION_DISABLED',
+            'message' => 'ثبت حساب فقط پس از تأیید شماره موبایل انجام می‌شود.',
+            'errors' => (object) [],
+        ], 403));
+    }
+
     public function rules(): array
     {
         return [
