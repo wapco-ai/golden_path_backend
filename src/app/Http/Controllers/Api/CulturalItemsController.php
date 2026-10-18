@@ -3,7 +3,9 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use Carbon\CarbonImmutable;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
@@ -79,6 +81,7 @@ class CulturalItemsController extends Controller
             ->get();
 
         $poiIds = $pois->pluck('poi_id')->values()->all();
+        $createdAtByPoi = $this->culturalCreationDates($poiIds);
 
         // Fetch POI names from i18n_texts (poi_points.name) for the same page (avoid N+1)
         $i18nRows = collect();
@@ -104,7 +107,7 @@ class CulturalItemsController extends Controller
 
         $byPoi = $contents->groupBy('poi_id');
 
-        $items = $pois->map(function ($p) use ($byPoi, $i18nByPoi) {
+        $items = $pois->map(function ($p) use ($byPoi, $i18nByPoi, $createdAtByPoi) {
             $rows = $byPoi->get($p->poi_id, collect());
 
             $titles = ['fa' => null, 'en' => null, 'ar' => null, 'ur' => null];
@@ -145,6 +148,7 @@ class CulturalItemsController extends Controller
 
             return [
                 'poiId' => (int) $p->poi_id,
+                'createdAt' => $createdAtByPoi->get($p->poi_id),
 
                 'title'       => $titles['fa'],
                 'description' => $descs['fa'],
@@ -270,6 +274,7 @@ class CulturalItemsController extends Controller
 
         return response()->json([
             'poiId' => (int) $poi->poi_id,
+            'createdAt' => $this->culturalCreationDates([$poiId])->get($poiId),
             'titles' => $titles,
             'descriptions' => $descs,
             'media' => $mediaByLang,
@@ -491,6 +496,8 @@ class CulturalItemsController extends Controller
 
     protected function upsertTranslations(int $poiId, array $translations, bool $isUpdate = false): void
     {
+        $createdAt = DB::raw('CURRENT_TIMESTAMP');
+
         foreach (['fa', 'en', 'ar', 'ur'] as $lang) {
             if (!isset($translations[$lang])) continue;
 
@@ -510,11 +517,31 @@ class CulturalItemsController extends Controller
                 $insert['media'] = json_encode([], JSON_UNESCAPED_UNICODE);
             }
 
-            DB::table('contents')->updateOrInsert(
-                ['poi_id' => $poiId, 'lang' => $lang],
-                $isUpdate ? $update : $insert
+            // Creation belongs to the first insert, including when an existing
+            // translation has an unknown legacy date. Never overwrite it on edit.
+            DB::table('contents')->upsert(
+                [['poi_id' => $poiId, 'lang' => $lang, 'created_at' => $createdAt] + $insert],
+                ['poi_id', 'lang'],
+                array_keys($isUpdate ? $update : $insert)
             );
         }
+    }
+
+    protected function culturalCreationDates(array $poiIds): Collection
+    {
+        if (empty($poiIds)) {
+            return collect();
+        }
+
+        // An item spans every translation. A legacy translation with no known
+        // date must keep the item's creation unknown when another language is added.
+        return DB::table('contents')
+            ->whereIn('poi_id', $poiIds)
+            ->select('poi_id')
+            ->selectRaw('CASE WHEN COUNT(created_at) = COUNT(*) THEN MIN(created_at) END AS created_at')
+            ->groupBy('poi_id')
+            ->pluck('created_at', 'poi_id')
+            ->map(fn ($date) => $date === null ? null : CarbonImmutable::parse($date, 'UTC')->utc()->toIso8601String());
     }
 
 
