@@ -224,6 +224,8 @@ Route::prefix('v1')->group(function () {
             Route::get('user-visits',    [DashboardController::class, 'userVisits']);
             Route::get('comment-stats',  [DashboardController::class, 'commentStats']);
             Route::get('notifications',  [DashboardController::class, 'notifications']);
+            Route::post('notifications/read', [DashboardController::class, 'markNotificationsRead']);
+            Route::post('notifications/read-all', [DashboardController::class, 'markAllNotificationsRead']);
             Route::get('recent-users',   [DashboardController::class, 'recentUsers']);
         });
 
