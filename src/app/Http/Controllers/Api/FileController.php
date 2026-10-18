@@ -5,11 +5,13 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Middleware\AdminAuth;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class FileController extends Controller implements HasMiddleware
@@ -74,6 +76,11 @@ class FileController extends Controller implements HasMiddleware
 
         $file = $data['file'];
         $ext  = strtolower($file->getClientOriginalExtension() ?: 'bin');
+        // Cultural media has its own policy. Other upload consumers keep their
+        // existing contract, including guidance-point galleries.
+        $mime = $entityTable === 'contents'
+            ? $this->validateCulturalMedia($file, $bucket, $ext)
+            : $file->getClientMimeType();
 
         $keepOriginal = (bool)($data['keep_original_name'] ?? false);
 
@@ -109,7 +116,7 @@ class FileController extends Controller implements HasMiddleware
                 'path'          => $path,
                 'url'           => $url,
                 'original_name' => $file->getClientOriginalName(),
-                'mime'          => $file->getClientMimeType(),
+                'mime'          => $mime,
                 'size'          => $file->getSize(),
                 'entity_table'  => $entityTable,
                 'entity_id'     => (int)$entityId,
@@ -121,13 +128,63 @@ class FileController extends Controller implements HasMiddleware
             'path'          => $path,
             'url'           => $url,
             'original_name' => $file->getClientOriginalName(),
-            'mime'          => $file->getClientMimeType(),
+            'mime'          => $mime,
             'size'          => $file->getSize(),
             'entity_table'  => $entityTable,
             'entity_id'     => (int)$entityId,
             'bucket'        => $bucket,
             'attached'      => $attached['attached'],
         ], 201);
+    }
+
+    private function validateCulturalMedia(UploadedFile $file, string $bucket, string $extension): string
+    {
+        $mime = strtolower($file->getMimeType() ?: 'application/octet-stream');
+        $claimedMime = strtolower($file->getClientMimeType());
+        $imageExtensions = [
+            'image/jpeg' => ['jpg', 'jpeg'],
+            'image/png' => ['png'],
+            'image/webp' => ['webp'],
+            'image/gif' => ['gif'],
+        ];
+
+        // Also recognize unsupported image/video attempts outside their normal
+        // bucket, so renaming a movie or choosing "files" cannot bypass policy.
+        $looksLikeVideo = $bucket === 'videos'
+            || str_starts_with($mime, 'video/')
+            || str_starts_with($claimedMime, 'video/')
+            || in_array($extension, ['mp4', 'm4v', 'mov', 'avi', 'webm', 'mkv', 'mpeg', 'mpg', '3gp', 'ogv', 'wmv'], true);
+        $looksLikeImage = str_starts_with($mime, 'image/')
+            || str_starts_with($claimedMime, 'image/')
+            || in_array($extension, ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg', 'bmp', 'tif', 'tiff', 'heic', 'heif', 'avif', 'ico'], true);
+
+        if ($looksLikeVideo) {
+            if ($mime !== 'video/mp4' || $extension !== 'mp4') {
+                throw ValidationException::withMessages([
+                    'file' => ['فرمت ویدیو باید MP4 باشد و محتوای فایل با پسوند آن مطابقت داشته باشد.'],
+                ]);
+            }
+
+            return $mime; // The common file rule already enforces the 50 MiB ceiling.
+        }
+
+        // Older cultural forms sent both photos and videos to "images". MP4
+        // remains supported there, while the new "videos" bucket is accepted too.
+        if ($looksLikeImage || in_array($bucket, ['images', 'gallery', 'cover'], true)) {
+            if (!isset($imageExtensions[$mime])
+                || !in_array($extension, $imageExtensions[$mime], true)
+                || @getimagesize($file->getPathname()) === false) {
+                throw ValidationException::withMessages([
+                    'file' => ['فرمت تصویر باید JPG، JPEG، PNG، WebP یا GIF باشد و محتوای فایل با پسوند آن مطابقت داشته باشد.'],
+                ]);
+            }
+            if ($file->getSize() > 5 * 1024 * 1024) {
+                throw ValidationException::withMessages(['file' => ['حداکثر حجم هر تصویر ۵ مگابایت است.']]);
+            }
+        }
+
+        // Audio and document uploads retain their existing 50 MiB behavior.
+        return $mime;
     }
 
     /**

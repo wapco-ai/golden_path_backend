@@ -15,6 +15,8 @@
             <file>tests/Feature/PoiEndpointSearchTest.php</file>
             <file>tests/Feature/DoorGraphDispatchTest.php</file>
             <file>tests/Feature/CulturalItemTimestampTest.php</file>
+            <file>tests/Feature/CulturalMediaListTest.php</file>
+            <file>tests/Feature/CulturalLandmarkMediaTest.php</file>
         </testsuite>
     </testsuites>
     <source>
