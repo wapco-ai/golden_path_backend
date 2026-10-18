@@ -295,4 +295,31 @@ class CategoryAdminWriteTest extends TestCase
         $this->assertNull($this->listed($parent['id'])['createdAt']);
         $this->assertNull($this->listed($parent['id'])['subcategories'][0]['createdAt']);
     }
+
+    public function test_real_duplicate_requests_without_accept_return_422_json_instead_of_redirecting_to_frontend(): void
+    {
+        $one = $this->create($this->marker.' اول');
+        $two = $this->create($this->marker.' دوم');
+        $childOne = $this->child($one['id'], 'زیرگروه اول');
+        $childTwo = $this->child($one['id'], 'زیرگروه دوم');
+        $count = DB::table('categories')->count();
+        foreach ([
+            ['POST', '/api/v1/admin/categories', $one['title']],
+            ['PUT', '/api/v1/admin/categories/'.$two['id'], $one['title']],
+            ['POST', '/api/v1/admin/categories/'.$one['id'].'/subcategories', $childOne['title']],
+            ['PUT', '/api/v1/admin/subcategories/'.$childTwo['id'], $childOne['title']],
+        ] as [$method, $url, $title]) {
+            $this->call($method, $url, [], [], [], [
+                'CONTENT_TYPE' => 'application/json', 'HTTP_REFERER' => 'http://localhost:5173/admin',
+            ], json_encode(['title' => $title]))->assertUnprocessable()->assertHeader('Content-Type', 'application/json')
+                ->assertHeaderMissing('Location')->assertJsonValidationErrors('title');
+        }
+        $this->post('/api/v1/admin/categories', [
+            'payload' => json_encode(['title' => $one['title']]), 'icon' => $this->photo(),
+        ], ['Referer' => 'http://localhost:5173/admin', 'Accept' => '*/*'])
+            ->assertUnprocessable()->assertHeader('Content-Type', 'application/json')
+            ->assertHeaderMissing('Location')->assertJsonValidationErrors('title');
+        $this->assertSame($count, DB::table('categories')->count());
+        $this->assertSame([], Storage::disk('public')->allFiles());
+    }
 }

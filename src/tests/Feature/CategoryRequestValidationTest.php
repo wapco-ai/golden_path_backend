@@ -4,7 +4,10 @@ namespace Tests\Feature;
 
 use App\Http\Middleware\AdminAuth;
 use App\Services\CategoryAdminService;
+use App\Services\JwtService;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Route;
+use Illuminate\Validation\ValidationException;
 use Mockery;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
@@ -117,5 +120,77 @@ class CategoryRequestValidationTest extends TestCase
             '_method' => 'PUT', 'payload' => json_encode(['title' => 'ویرایش با تصویر']),
             'icon' => new UploadedFile(__DIR__.'/../Fixtures/cultural-media/tiny.jpg', 'photo.jpg', 'image/jpeg', null, true),
         ], ['Accept' => 'application/json'])->assertOk()->assertJsonPath('id', 94);
+    }
+
+    public static function duplicateRequestsWithoutJsonAccept(): array
+    {
+        return [
+            'create missing Accept' => ['POST', '/api/v1/admin/categories', 'create', null],
+            'create wildcard Accept' => ['POST', '/api/v1/admin/categories', 'create', '*/*'],
+            'update missing Accept' => ['PUT', '/api/v1/admin/categories/95', 'update', null],
+            'update wildcard Accept' => ['PUT', '/api/v1/admin/categories/95', 'update', '*/*'],
+            'create HTML Accept' => ['POST', '/api/v1/admin/categories', 'create', 'text/html'],
+        ];
+    }
+
+    #[DataProvider('duplicateRequestsWithoutJsonAccept')]
+    public function test_duplicate_validation_is_json_422_without_a_frontend_redirect(string $method, string $url, string $serviceMethod, ?string $accept): void
+    {
+        $this->service()->shouldReceive($serviceMethod)->once()->andThrow(ValidationException::withMessages([
+            'title' => ['دسته‌بندی دیگری با این عنوان وجود دارد.'],
+        ]));
+        $headers = ['CONTENT_TYPE' => 'application/json', 'HTTP_REFERER' => 'http://localhost:5173/admin'];
+        if ($accept !== null) $headers['HTTP_ACCEPT'] = $accept;
+        $this->call($method, $url, [], [], [], $headers, json_encode(['title' => 'عنوان تکراری']))
+            ->assertUnprocessable()->assertHeader('Content-Type', 'application/json')
+            ->assertHeaderMissing('Location')->assertJsonValidationErrors('title')
+            ->assertJsonPath('errors.title.0', 'دسته‌بندی دیگری با این عنوان وجود دارد.');
+    }
+
+    public static function invalidRequestsWithoutJsonAccept(): array
+    {
+        return [
+            ['POST', '/api/v1/admin/categories', 'create'],
+            ['PUT', '/api/v1/admin/categories/95', 'update'],
+        ];
+    }
+
+    #[DataProvider('invalidRequestsWithoutJsonAccept')]
+    public function test_form_request_json_errors_do_not_require_an_accept_header(string $method, string $url, string $serviceMethod): void
+    {
+        $this->service()->shouldNotReceive($serviceMethod);
+        $this->call($method, $url, [], [], [], [
+            'CONTENT_TYPE' => 'application/json', 'HTTP_REFERER' => 'http://localhost:5173/admin',
+        ], json_encode(['title' => ['invalid']]))->assertUnprocessable()->assertHeader('Content-Type', 'application/json')
+            ->assertHeaderMissing('Location')->assertJsonValidationErrors('title');
+    }
+
+    #[DataProvider('invalidRequestsWithoutJsonAccept')]
+    public function test_multipart_errors_do_not_redirect_when_accept_is_absent(string $method, string $url, string $serviceMethod): void
+    {
+        $this->service()->shouldNotReceive($serviceMethod);
+        $body = ['payload' => '{"title":["invalid"]}'];
+        if ($method === 'PUT') $body['_method'] = 'PUT';
+        $this->post($url, $body + ['icon' => new UploadedFile(
+            __DIR__.'/../Fixtures/cultural-media/tiny.jpg', 'photo.jpg', 'image/jpeg', null, true
+        )], ['Referer' => 'http://localhost:5173/admin'])->assertUnprocessable()
+            ->assertHeader('Content-Type', 'application/json')->assertHeaderMissing('Location')->assertJsonValidationErrors('title');
+    }
+
+    public function test_category_authorization_still_returns_json_without_accept(): void
+    {
+        $this->instance(JwtService::class, Mockery::mock(JwtService::class));
+        $this->withMiddleware(AdminAuth::class);
+        $this->post('/api/v1/admin/categories', ['title' => 'گروه'], ['Referer' => 'http://localhost:5173/admin'])
+            ->assertUnauthorized()->assertHeader('Content-Type', 'application/json')->assertHeaderMissing('Location');
+    }
+
+    public function test_web_and_other_api_routes_keep_their_existing_content_negotiation(): void
+    {
+        foreach (['category-negotiation-web-check', 'api/v1/unrelated-negotiation-check'] as $path) {
+            Route::post($path, fn () => throw ValidationException::withMessages(['title' => ['invalid']]));
+            $this->post('/'.$path, [], ['Referer' => 'http://localhost:5173/admin'])->assertRedirect('http://localhost:5173/admin');
+            $this->postJson('/'.$path, [])->assertUnprocessable()->assertHeader('Content-Type', 'application/json');
+        }
     }
 }
