@@ -145,6 +145,7 @@ Route::prefix('v1')->group(function () {
 
             Route::get('/support-feedbacks', [AdminSupportFeedbackController::class, 'index']);
             Route::patch('/support-feedbacks/{id}', [AdminSupportFeedbackController::class, 'updateStatus']);
+            Route::delete('/support-feedbacks/{id}', [AdminSupportFeedbackController::class, 'destroy']);
 
 
             Route::get('comments', [CommentAdminController::class, 'index']);
