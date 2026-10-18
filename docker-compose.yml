@@ -51,6 +51,7 @@ services:
     volumes:
       - ./src:/var/www/html
       - ./src/docker-data/uploads:/var/www/html/storage/app/public/uploads
+      - ./docker/app/uploads.ini:/usr/local/etc/php/conf.d/uploads.ini:ro
     depends_on:
       - db
       - redis
@@ -77,6 +78,7 @@ services:
     volumes:
       - ./src:/var/www/html
       - ./src/docker-data/uploads:/var/www/html/storage/app/public/uploads
+      - ./docker/app/uploads.ini:/usr/local/etc/php/conf.d/uploads.ini:ro
     depends_on:
       - db
       - redis

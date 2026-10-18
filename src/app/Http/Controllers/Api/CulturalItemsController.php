@@ -123,12 +123,12 @@ class CulturalItemsController extends Controller
                 $titles[$lang] = $r->title;
                 $descs[$lang]  = $r->body;
 
-                if ($primaryImage === null) {
-                    $m = $this->jsonToArray($r->media);
-                    if (is_array($m) && count($m) > 0) {
-                        $primaryImage = $m[0]['url'] ?? $m[0]['src'] ?? null;
+                $m = $this->jsonToArray($r->media);
+                if (is_array($m) && count($m) > 0) {
+                    if ($mediaPreview === []) {
                         $mediaPreview = $m;
                     }
+                    $primaryImage ??= $this->primaryImageFromMedia($m);
                 }
             }
 
@@ -407,6 +407,48 @@ class CulturalItemsController extends Controller
     // ------------------------------------------------------------
     // Validation + helpers
     // ------------------------------------------------------------
+    private function primaryImageFromMedia(array $media): ?string
+    {
+        // Honour an explicit primary photo without ever using video/audio/docs
+        // as an <img> source. Leave every stored media item intact.
+        $preferred = array_filter($media, fn ($item) => is_array($item)
+            && in_array($item['isPrimary'] ?? false, [true, 'true'], true));
+        foreach (array_merge(array_values($preferred), array_values($media)) as $item) {
+            if (is_string($item)) $item = ['url' => $item];
+            if (!is_array($item)) continue;
+            $type = strtolower(trim((string) ($item['type'] ?? '')));
+            $mime = strtolower(trim(explode(';', (string) ($item['mime'] ?? (str_contains($type, '/') ? $type : '')))[0]));
+            $url = null;
+            foreach (['url', 'path', 'src'] as $key) {
+                if (is_string($item[$key] ?? null) && trim($item[$key]) !== '') {
+                    $url = $item[$key];
+                    break;
+                }
+            }
+            if ($url === null && is_string($item['data'] ?? null)) {
+                if (str_starts_with(strtolower($item['data']), 'data:image/')) {
+                    $url = $item['data'];
+                } elseif ($item['data'] !== '' && str_starts_with($mime, 'image/')) {
+                    $url = 'data:'.$mime.';base64,'.$item['data'];
+                }
+            }
+            $extension = is_string($url) ? strtolower(pathinfo(parse_url($url, PHP_URL_PATH) ?: '', PATHINFO_EXTENSION)) : '';
+            if (($mime !== '' && !str_starts_with($mime, 'image/'))
+                || ($type !== '' && $type !== 'image' && !str_starts_with($type, 'image/'))
+                || (is_string($url) && str_starts_with(strtolower($url), 'data:') && !str_starts_with(strtolower($url), 'data:image/'))
+                || in_array($extension, ['mp4', 'm4v', 'mov', 'webm', 'avi', 'mkv', '3gp', 'mp3', 'wav', 'm4a', 'ogg', 'oga', 'aac', 'flac', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'zip'], true)) {
+                continue;
+            }
+            $isImage = str_starts_with($mime, 'image/') || $type === 'image'
+                || (is_string($url) && str_starts_with(strtolower($url), 'data:image/'))
+                || in_array($extension, ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg', 'bmp', 'avif', 'heic', 'heif', 'tif', 'tiff'], true);
+            if (!$isImage) continue;
+            if (is_string($url) && trim($url) !== '') return $url;
+        }
+
+        return null;
+    }
+
     protected function validateUpsert(Request $request, bool $isUpdate = false): array
     {
         $placeTypes = ['ziyarati', 'farhangi', 'khadamati', 'tarikhi', 'memari'];

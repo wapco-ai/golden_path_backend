@@ -73,6 +73,9 @@ jobs:
       - name: Guidance source and coverage contract tests (mocked DB, no database server)
         run: vendor/bin/phpunit tests/Feature --filter='Guidance(ImageSource|Coverage)Test'
 
+      - name: Cultural media upload validation tests (no database server)
+        run: vendor/bin/phpunit tests/Feature/CulturalMediaUploadTest.php
+
       - name: Public profile name contract tests (no database server)
         run: vendor/bin/phpunit tests/Feature/ProfileNameContractTest.php
 
@@ -114,6 +117,8 @@ jobs:
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260917_180000_public_place_floors.up.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261010_220000_multifloor_generic_connection.up.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261018_160000_cultural_content_created_at.up.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260918_160000_poi_endpoint_search.up.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261018_180000_cultural_landmark_images.up.sql
       - run: composer install --no-interaction --prefer-dist --no-progress --no-scripts
         working-directory: src
       - name: Real database, HTTP and routing tests
@@ -124,6 +129,8 @@ jobs:
         env:
           PGPASSWORD: connector_test_only
         run: |
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261018_180000_cultural_landmark_images.down.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260918_160000_poi_endpoint_search.down.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261018_160000_cultural_content_created_at.down.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261010_220000_multifloor_generic_connection.down.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260917_180000_public_place_floors.down.sql
@@ -140,3 +147,5 @@ jobs:
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260917_180000_public_place_floors.up.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261010_220000_multifloor_generic_connection.up.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261018_160000_cultural_content_created_at.up.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20260918_160000_poi_endpoint_search.up.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261018_180000_cultural_landmark_images.up.sql
