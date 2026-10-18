@@ -22,7 +22,11 @@ class SignedUsersController extends Controller
         $pageSize = (int)($request->query('pageSize', 20));
         $search = $request->query('search');
 
-        $paginator = $this->svc->paginate($page, $pageSize, is_string($search) ? $search : null);
+        $filters = $request->validated();
+        $paginator = $this->svc->paginate(
+            $page, $pageSize, is_string($search) ? $search : null,
+            $filters['startDate'] ?? null, $filters['endDate'] ?? null,
+        );
 
         return response()->json((new SignedUserCollection($paginator))->toArray($request));
     }
