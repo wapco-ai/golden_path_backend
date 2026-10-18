@@ -10,9 +10,9 @@ interface SignedUserRepositoryInterface
     /**
      * Signed-up end users (NOT admins).
      */
-    public function paginate(int $page, int $pageSize, ?string $search = null): LengthAwarePaginator;
+    public function paginate(int $page, int $pageSize, ?string $search = null, ?string $startDate = null, ?string $endDate = null): LengthAwarePaginator;
 
-    public function findOrFail(int $id): User;
+    public function findOrFail(int $id, bool $forUpdate = false): User;
 
     public function save(User $user): User;
 }

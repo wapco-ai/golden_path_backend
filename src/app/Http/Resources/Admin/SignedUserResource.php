@@ -19,6 +19,7 @@ class SignedUserResource extends JsonResource
             'isActive' => (bool)($this->is_active ?? false),
             'createdAt' => optional($this->created_at)->toISOString(),
             'lastLoginAt' => optional($this->last_login_at)->toISOString(),
+            'lastManualActivationAt' => $this->last_manual_activation_at?->utc()->toISOString(),
             'lastLoginIp' => $this->last_login_ip,
         ];
     }

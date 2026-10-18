@@ -76,6 +76,7 @@ class User extends Authenticatable
             'otp_last_sent_at' => 'datetime',
             'locked_until' => 'datetime',
             'last_login_at' => 'datetime',
+            'last_manual_activation_at' => 'datetime',
             'failed_login_attempts' => 'integer',
             'birth_date' => 'date',
             'address' => 'array',
