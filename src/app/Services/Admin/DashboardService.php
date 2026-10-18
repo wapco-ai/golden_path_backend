@@ -242,21 +242,21 @@ class DashboardService
         $users = (clone $q)
             ->orderByDesc('created_at')
             ->forPage($page, $pageSize)
-            ->get(['id', 'name', 'email', 'mobile', 'created_at']);
+            ->get(['id', 'name', 'email', 'mobile', 'created_at', 'birth_date', 'gender', 'address', 'last_login_at']);
 
         // successCount: اگر meta.user_id / meta.userId ثبت شده باشد
         $ids = $users->pluck('id')->map(fn($v) => (int)$v)->all();
 
         $counts = [];
         if ($this->tableExists('route_logs')) {
+            // Legacy meta may contain malformed identifiers. Guard before casting
+            // so an unrelated log cannot fail the whole dashboard request.
+            $userIdSql = "CASE WHEN COALESCE(meta->>'user_id', meta->>'userId') ~ '^[0-9]{1,19}$'
+                THEN COALESCE(meta->>'user_id', meta->>'userId')::numeric END";
             $rows = DB::table('route_logs')
-                ->selectRaw("
-                    COALESCE((meta->>'user_id')::int, (meta->>'userId')::int) as uid,
-                    COUNT(*)::int as cnt
-                ")
+                ->selectRaw("{$userIdSql} as uid, COUNT(*)::int as cnt")
                 ->where('ok', true)
-                ->whereRaw("COALESCE((meta->>'user_id')::int, (meta->>'userId')::int) IS NOT NULL")
-                ->whereIn(DB::raw("COALESCE((meta->>'user_id')::int, (meta->>'userId')::int)"), $ids)
+                ->whereIn(DB::raw($userIdSql), $ids)
                 ->groupBy('uid')
                 ->get();
 
@@ -267,13 +267,26 @@ class DashboardService
 
         $data = [];
         foreach ($users as $u) {
+            $address = json_decode($u->address ?? '{}', true);
+            $address = is_array($address) ? $address : [];
             $data[] = [
                 'id'           => (int)$u->id,
                 'name'         => $u->name,
                 'email'        => $u->email,
-                'mobile' => $u->mobile,
-                'joinDate'     => Carbon::parse($u->created_at)->toDateTimeString(),
+                'mobile'       => $u->mobile,
+                'phone'        => $u->mobile,
+                // Birthdays are calendar dates, not instants to timezone-shift.
+                'birthDate'    => $u->birth_date,
+                'gender'       => in_array($u->gender, ['male', 'female', 'other'], true) ? $u->gender : null,
+                'province'     => is_string($address['province'] ?? null) ? $address['province'] : null,
+                'city'         => is_string($address['city'] ?? null) ? $address['city'] : null,
+                // users.created_at is naive UTC; never replace unknown history with now().
+                'joinDate'     => $u->created_at === null ? null : Carbon::parse($u->created_at, 'UTC')->utc()->toISOString(),
+                'lastLoginAt'  => $u->last_login_at === null ? null : Carbon::parse($u->last_login_at)->utc()->toISOString(),
                 'successCount' => $counts[(int)$u->id] ?? 0,
+                // No server source currently records saved routes or confirmed place visits.
+                'savedRoutesCount' => null,
+                'placeVisitsCount' => null,
             ];
         }
 
