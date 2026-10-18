@@ -189,6 +189,8 @@ class DashboardRecentUsersAdminTest extends TestCase
 
     public function test_successful_public_otp_login_is_read_from_its_persisted_timestamp_without_dashboard_writes(): void
     {
+        // This fixture verifies the timestamp using the explicit legacy OTP provider.
+        config(['public_auth.provider' => 'local']);
         $id = $this->user([
             'birth_date' => '2000-03-20', 'last_login_at' => null,
             'otp_hash' => Hash::make('483927'), 'otp_expires_at' => '2099-01-01T00:00:00Z',

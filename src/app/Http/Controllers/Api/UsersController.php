@@ -20,7 +20,8 @@ class UsersController extends Controller
     public function __construct(protected ProfileService $profiles) {}
 
     /**
-     * POST /users (after OTP)
+     * Legacy POST /users, enabled only by the explicit local OTP provider.
+     * Razavi creates accounts inside its verified identity transaction.
      */
     public function store(UserStoreRequest $request)
     {

@@ -19,6 +19,8 @@ class SignedUserAdminTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // This regression fixture exercises the explicit legacy OTP implementation.
+        config(['public_auth.provider' => 'local']);
         if (config('database.default') !== 'pgsql') $this->markTestSkipped('Requires isolated PostgreSQL/PostGIS database.');
         DB::beginTransaction();
         $this->transactionStarted = true;

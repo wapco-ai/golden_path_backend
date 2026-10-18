@@ -81,8 +81,10 @@ Route::prefix('v1')->group(function () {
     });
 
     Route::prefix('auth/otp')->group(function () {
-        Route::post('request', [\App\Http\Controllers\Api\OtpAuthController::class, 'requestOtp']);
-        Route::post('verify',  [\App\Http\Controllers\Api\OtpAuthController::class, 'verifyOtp']);
+        Route::post('request', [\App\Http\Controllers\Api\OtpAuthController::class, 'requestOtp'])
+            ->middleware('throttle:6,1,public-otp-request:');
+        Route::post('verify',  [\App\Http\Controllers\Api\OtpAuthController::class, 'verifyOtp'])
+            ->middleware('throttle:12,1,public-otp-verify:');
     });
 
     // Users

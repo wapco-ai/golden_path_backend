@@ -13,6 +13,9 @@ class PublicUsersTest extends TestCase
 
     public function test_create_user_success()
     {
+        // Only the legacy local provider permits account creation outside verified OTP login.
+        config(['public_auth.provider' => 'local']);
+
         $res = $this->postJson('/api/v1/users', [
             'phone' => '09123334444',
             'fullName' => 'نام تست',
