@@ -18,7 +18,7 @@ class CategoryRequestValidationTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->withoutMiddleware(AdminAuth::class);
+        $this->withoutMiddleware([AdminAuth::class, \App\Http\Middleware\AdminSectionAccess::class]);
     }
 
     private function service(): \Mockery\MockInterface

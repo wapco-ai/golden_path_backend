@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Middleware\AdminAuth;
+use App\Services\Admin\AdminAccess;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Str;
@@ -69,6 +70,8 @@ class FileController extends Controller implements HasMiddleware
                 'errors'  => ['entity_table' => ['entity_table is not allowed.']],
             ], 422);
         }
+
+        abort_unless($this->canWriteEntity($request, $entityTable), 403, 'Access denied');
 
         // مسیر استاندارد
         // uploads/{entity_table}/{entity_id}/{bucket}/...
@@ -242,6 +245,8 @@ class FileController extends Controller implements HasMiddleware
         $disk = Storage::disk('public');
         $path = $this->normalizePath($data['path']);
 
+        abort_unless($this->canWriteEntity($request, explode('/', $path)[1]), 403, 'Access denied');
+
         $fileDeleted = false;
         $dbDeleted = false;
         $pointId = null;
@@ -348,6 +353,17 @@ class FileController extends Controller implements HasMiddleware
     // -----------------------
     // Helpers (security)
     // -----------------------
+
+    private function canWriteEntity(Request $request, string $entityTable): bool
+    {
+        $titles = match ($entityTable) {
+            'contents' => ['مدیریت اطلاعات فرهنگی'],
+            'categories' => ['مدیریت دسته بندی'],
+            'areas', 'doors', 'guidance_points', 'poi_points' => ['مدیریت نقشه'],
+            default => [],
+        };
+        return $titles && $request->user() && AdminAccess::hasAny($request->user(), $titles);
+    }
 
 
     /**

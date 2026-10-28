@@ -22,7 +22,7 @@ class CulturalMediaListTest extends TestCase
         DB::beginTransaction();
         $this->transactionStarted = true;
         (require base_path('database/migrations/2026_10_18_160000_add_cultural_content_created_at.php'))->up();
-        $this->withoutMiddleware(AdminAuth::class);
+        $this->withoutMiddleware([AdminAuth::class, \App\Http\Middleware\AdminSectionAccess::class]);
         $this->marker = 'mixed-cultural-media-'.bin2hex(random_bytes(6));
         $this->poiId = (int) DB::selectOne(
             "INSERT INTO poi_points(geom,poi_type,floor,has_content,attrs)

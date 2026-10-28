@@ -51,7 +51,7 @@ class MultiFloorConnectorTest extends TestCase
 
     private function create(array $payload = []): array
     {
-        $this->withoutMiddleware(AdminAuth::class);
+        $this->withoutMiddleware([AdminAuth::class, \App\Http\Middleware\AdminSectionAccess::class]);
         return $this->postJson('/api/v1/admin/connectors',$payload ?: $this->payload())->assertCreated()->json();
     }
 
@@ -151,7 +151,7 @@ class MultiFloorConnectorTest extends TestCase
     public function test_ambiguous_area_requires_explicit_valid_candidate(): void
     {
         DB::statement('INSERT INTO areas(geom,area_type,floor) SELECT geom,area_type,floor FROM areas WHERE id=?',[$this->areas[0]]);
-        $this->withoutMiddleware(AdminAuth::class);
+        $this->withoutMiddleware([AdminAuth::class, \App\Http\Middleware\AdminSectionAccess::class]);
         $this->postJson('/api/v1/admin/connectors',$this->payload())->assertUnprocessable()->assertJsonValidationErrors('stops.1.area_id');
         $p=$this->payload(); $p['stops'][1]['area_id']=$this->areas[0];
         $this->create($p);

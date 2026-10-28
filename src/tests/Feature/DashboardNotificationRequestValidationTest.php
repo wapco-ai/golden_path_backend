@@ -19,7 +19,7 @@ class DashboardNotificationRequestValidationTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->withoutMiddleware(AdminAuth::class);
+        $this->withoutMiddleware([AdminAuth::class, \App\Http\Middleware\AdminSectionAccess::class]);
 
         $admin = new User;
         $admin->id = self::ADMIN_ID;

@@ -159,6 +159,7 @@ class AdminAuthController extends Controller
                 'name'     => $user->name,
                 'email'    => $user->email,
                 'roles'    => $roles,
+                'roleTitles' => $user->adminRoles()->pluck('title')->values(),
                 'permissions' => $permissions,
             ],
         ]);
@@ -248,6 +249,7 @@ class AdminAuthController extends Controller
             'name'     => $user->name,
             'email'    => $user->email,
             'roles'    => $roles,
+            'roleTitles' => $user->adminRoles()->pluck('title')->values(),
             'permissions' => $permissions,
             'status'   => $user->status,
             'lastLoginAt' => $user->last_login_at,

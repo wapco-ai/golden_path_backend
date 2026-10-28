@@ -689,6 +689,10 @@ class GuidancePointController extends Controller
             return false;
         }
 
+        if ($user instanceof \App\Models\User && \App\Services\Admin\AdminAccess::hasAny($user, ['مدیریت نقشه'])) {
+            return true;
+        }
+
         $allowedRoles = [
             'super_dashboard_admin',
             'superadmin',

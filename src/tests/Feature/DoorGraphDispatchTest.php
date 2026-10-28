@@ -43,7 +43,7 @@ class DoorGraphDispatchTest extends TestCase
             'queue.connections.database.after_commit' => false,
         ]);
         Cache::forgetDriver('database');
-        $this->withoutMiddleware(AdminAuth::class);
+        $this->withoutMiddleware([AdminAuth::class, \App\Http\Middleware\AdminSectionAccess::class]);
 
         // Deliberately no enclosing test transaction: these tests must observe
         // real outermost commits and rolled-back afterCommit callbacks.
