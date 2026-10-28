@@ -25,7 +25,7 @@ class CategoryAdminWriteTest extends TestCase
         DB::beginTransaction();
         $this->transactionStarted = true;
         $this->migration()->up();
-        $this->withoutMiddleware(AdminAuth::class);
+        $this->withoutMiddleware([AdminAuth::class, \App\Http\Middleware\AdminSectionAccess::class]);
         Storage::fake('public');
         $this->marker = 'category-admin-'.bin2hex(random_bytes(6));
     }

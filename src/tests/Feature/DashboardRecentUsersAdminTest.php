@@ -20,6 +20,7 @@ class DashboardRecentUsersAdminTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->withoutMiddleware(\App\Http\Middleware\AdminSectionAccess::class);
         if (config('database.default') !== 'pgsql') {
             $this->markTestSkipped('Requires isolated PostgreSQL/PostGIS database.');
         }

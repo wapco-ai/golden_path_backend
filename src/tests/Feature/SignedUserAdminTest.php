@@ -25,7 +25,7 @@ class SignedUserAdminTest extends TestCase
         DB::beginTransaction();
         $this->transactionStarted = true;
         $this->migration()->up();
-        $this->withoutMiddleware(AdminAuth::class);
+        $this->withoutMiddleware([AdminAuth::class, \App\Http\Middleware\AdminSectionAccess::class]);
         $this->marker = 'signed-user-'.bin2hex(random_bytes(6));
     }
 

@@ -19,6 +19,15 @@ class CulturalMediaUploadTest extends TestCase
     {
         parent::setUp();
         $this->withoutMiddleware(AdminAuth::class);
+        \Illuminate\Support\Facades\Schema::create('admin_roles', function ($table) {
+            $table->id(); $table->string('code'); $table->string('title');
+        });
+        \Illuminate\Support\Facades\Schema::create('admin_user_roles', function ($table) {
+            $table->integer('user_id'); $table->integer('role_id');
+        });
+        \Illuminate\Support\Facades\DB::table('admin_roles')->insert(['id' => 1, 'code' => 'super_dashboard_admin', 'title' => 'ادمین کل داشبورد']);
+        \Illuminate\Support\Facades\DB::table('admin_user_roles')->insert(['user_id' => 1, 'role_id' => 1]);
+        $this->actingAs((new \App\Models\User())->forceFill(['id' => 1, 'is_admin' => true]));
         Storage::fake('public');
     }
 

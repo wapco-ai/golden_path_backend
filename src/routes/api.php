@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\Admin\FeedbackController as AdminFeedbackController
 use App\Http\Controllers\Api\Admin\AdminAuthController;
 use App\Http\Controllers\Api\Admin\AreaAdminController;
 use App\Http\Middleware\AdminAuth;
+use App\Http\Middleware\AdminSectionAccess;
 use App\Http\Controllers\Api\CulturalItemsController;
 use App\Http\Controllers\Api\DoorCrudController;
 use App\Http\Controllers\Api\Admin\DoorBulkController;
@@ -111,7 +112,7 @@ Route::prefix('v1')->group(function () {
     // ------------------------------------------------------------------
     // Admin-only APIs (must be protected)
     // ------------------------------------------------------------------
-    Route::middleware(AdminAuth::class)->group(function () {
+    Route::middleware([AdminAuth::class, AdminSectionAccess::class])->group(function () {
         Route::get('admin/connectors', [\App\Http\Controllers\Api\Admin\ConnectorController::class, 'index']);
         Route::get('admin/connectors/candidates', [\App\Http\Controllers\Api\Admin\ConnectorController::class, 'candidates']);
         Route::get('admin/connectors/{id}', [\App\Http\Controllers\Api\Admin\ConnectorController::class, 'show'])->whereNumber('id');
@@ -310,7 +311,7 @@ Route::prefix('v1/routing')->group(function () {
 
 // می‌تونی به جای can:manage-feedbacks از middleware خودت استفاده کنی
 // Admin feedback routes (use Admin JWT session)
-Route::middleware([AdminAuth::class])->prefix('/v1/admin')->group(function () {
+Route::middleware([AdminAuth::class, AdminSectionAccess::class])->prefix('/v1/admin')->group(function () {
     Route::get('/feedbacks', [AdminFeedbackController::class, 'index']);
     Route::patch('/feedbacks/{id}', [AdminFeedbackController::class, 'updateStatus']);
 });

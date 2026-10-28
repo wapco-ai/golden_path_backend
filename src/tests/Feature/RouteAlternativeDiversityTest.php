@@ -111,7 +111,7 @@ class RouteAlternativeDiversityTest extends TestCase
     private function applySql(string $direction): void
     {
         $sql = file_get_contents(database_path('sql/20261005_170000_diverse_route_alternatives.'.$direction.'.sql'));
-        DB::unprepared(preg_replace('/^(?:BEGIN|COMMIT);[ \\t]*\\r?$/m','',$sql));
+        DB::unprepared(preg_replace('/^(?:BEGIN|COMMIT);[ \t]*\r?$/m','',$sql));
     }
 
     private function functionDefinition(): string
@@ -218,7 +218,7 @@ class RouteAlternativeDiversityTest extends TestCase
     public function test_distinct_accessible_connectors_are_useful_with_identical_xy(): void
     {
         $areas = [$this->area([0,0,100,120],0),$this->area([0,0,100,120],1)];
-        $this->withoutMiddleware(AdminAuth::class);
+        $this->withoutMiddleware([AdminAuth::class, \App\Http\Middleware\AdminSectionAccess::class]);
         $connectorIds = [];
         foreach (['elevator','elevator','stair'] as $i=>$kind) {
             $payload = ['kind'=>$kind,'direction'=>'both','wait_seconds'=>20+$i*5,

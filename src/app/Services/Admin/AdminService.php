@@ -27,13 +27,13 @@ class AdminService
         return $this->repo->findOrFail($id);
     }
 
-    public function create(string $firstName, string $lastName, string $username, array $roles): User
+    public function create(string $firstName, string $lastName, string $username, array $roles, ?string $email = null, ?string $password = null): User
     {
         $firstName = trim($firstName);
         $lastName = trim($lastName);
         $username = trim($username);
 
-        return DB::transaction(function () use ($firstName, $lastName, $username, $roles) {
+        return DB::transaction(function () use ($firstName, $lastName, $username, $roles, $email, $password) {
             // unique username check (return 409)
             if (User::query()->where('username', $username)->exists()) {
                 abort(409, 'Username already exists');
@@ -42,6 +42,7 @@ class AdminService
             $user = new User();
             $user->name = trim($firstName . ' ' . $lastName);
             $user->username = $username;
+            $user->email = $email;
             $user->is_admin = true;
             $user->status = 'active';
             $user->is_active = true;
@@ -54,7 +55,7 @@ class AdminService
             AdminAuth::query()->updateOrCreate(
                 ['user_id' => $user->id],
                 [
-                    'password_hash' => Hash::make(Str::random(24)),
+                    'password_hash' => Hash::make($password ?? Str::random(24)),
                     'mfa_enabled' => false,
                     'mfa_secret' => null,
                     'last_password_change_at' => now(),
