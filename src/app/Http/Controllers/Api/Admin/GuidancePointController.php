@@ -689,7 +689,7 @@ class GuidancePointController extends Controller
             return false;
         }
 
-        if (\App\Services\Admin\AdminAccess::hasAny($user, ['مدیریت نقشه'])) {
+        if ($user instanceof \App\Models\User && \App\Services\Admin\AdminAccess::hasAny($user, ['مدیریت نقشه'])) {
             return true;
         }
 

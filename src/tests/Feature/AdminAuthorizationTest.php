@@ -63,6 +63,21 @@ class AdminAuthorizationTest extends TestCase
         $this->assertDatabaseHas('admin_user_roles', ['user_id'=>3, 'role_id'=>3]);
     }
 
+    public function test_super_admin_can_create_account_with_usable_credentials_and_role(): void
+    {
+        $payload = [
+            'firstName'=>'New', 'lastName'=>'Admin', 'username'=>'newadmin',
+            'email'=>'newadmin@example.test', 'password'=>'valid-pass-123',
+            'roles'=>['مدیریت نقشه'],
+        ];
+        $response = $this->postJson('/api/v1/admin/admins', $payload, $this->token(3))->assertCreated();
+        $id = $response->json('id');
+        $this->assertDatabaseHas('users', ['id'=>$id, 'username'=>'newadmin', 'email'=>'newadmin@example.test']);
+        $this->assertDatabaseHas('admin_user_roles', ['user_id'=>$id, 'role_id'=>2]);
+        $hash = DB::table('admin_auth')->where('user_id', $id)->value('password_hash');
+        $this->assertTrue(\Illuminate\Support\Facades\Hash::check('valid-pass-123', $hash));
+    }
+
     public function test_generic_file_mutations_cannot_bypass_section_access(): void
     {
         $this->deleteJson('/api/v1/files?path=uploads/contents/1/images/a.png', [], $this->token(2))->assertForbidden();
