@@ -689,56 +689,8 @@ class GuidancePointController extends Controller
             return false;
         }
 
-        if ($user instanceof \App\Models\User && \App\Services\Admin\AdminAccess::hasAny($user, ['مدیریت نقشه'])) {
-            return true;
-        }
-
-        $allowedRoles = [
-            'super_dashboard_admin',
-            'superadmin',
-            'admin',
-            'administrator',
-            'guidance_points_manager',
-            'guidance-point-manager',
-            'guidance_points_admin',
-        ];
-
-        $allowedPermissions = [
-            'guidance_points.manage',
-            'guidance_points.write',
-            'guidance-points.manage',
-            'guidance-points.write',
-            'manage_guidance_points',
-            'manage_guidance_point_images',
-            'map.manage',
-            'manage_maps',
-            'manage_routing_logs',
-            'manage_cultural_items',
-        ];
-
-        if (method_exists($user, 'adminRoles')) {
-            $roles = $user->adminRoles()
-                ->pluck('code')
-                ->map(fn($code) => strtolower(trim((string) $code)))
-                ->all();
-
-            if (array_intersect($roles, $allowedRoles)) {
-                return true;
-            }
-        }
-
-        if (method_exists($user, 'adminPermissions')) {
-            $permissions = $user->adminPermissions()
-                ->pluck('code')
-                ->map(fn($code) => strtolower(trim((string) $code)))
-                ->all();
-
-            if (array_intersect($permissions, $allowedPermissions)) {
-                return true;
-            }
-        }
-
-        return false;
+        return $user instanceof \App\Models\User
+            && \App\Services\Admin\AdminAccess::hasAny($user, ['مدیریت نقشه']);
     }
 
     private function logAdmin(Request $request, string $action, ?int $entityId, array $meta): void

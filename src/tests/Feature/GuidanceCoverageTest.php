@@ -3,7 +3,9 @@
 namespace Tests\Feature;
 
 use App\Http\Controllers\Api\Admin\GuidancePointController;
+use App\Models\User;
 use App\Services\GuidancePointImageService;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -17,11 +19,13 @@ class GuidanceCoverageTest extends TestCase
     private function request(array $data): Request
     {
         $request = Request::create('/api/v1/admin/guidance-points', 'POST', $data);
-        $request->setUserResolver(fn () => new class {
-            public int $id = 1;
-            public bool $is_admin = true;
-            public function adminRoles() { return collect([(object) ['code' => 'admin']]); }
-        });
+        $roles = Mockery::mock(BelongsToMany::class);
+        $roles->shouldReceive('whereIn')->with('title', ['مدیریت نقشه'])->andReturnSelf();
+        $roles->shouldReceive('exists')->andReturnTrue();
+        $admin = Mockery::mock(User::class)->makePartial();
+        $admin->forceFill(['id'=>1, 'is_admin'=>true]);
+        $admin->shouldReceive('adminRoles')->andReturn($roles);
+        $request->setUserResolver(fn () => $admin);
         return $request;
     }
 
