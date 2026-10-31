@@ -69,7 +69,7 @@ class AdminAuthController extends Controller
         }
 
         // چک قفل بودن
-        if ($user->status !== 'active' || ($user->locked_until && now()->lessThan($user->locked_until))) {
+        if ($user->status !== 'active' || !$user->is_active || ($user->locked_until && now()->lessThan($user->locked_until))) {
             AdminLoginLog::create([
                 'user_id'        => $user->id,
                 'identifier'     => $identifier,
@@ -190,7 +190,7 @@ class AdminAuthController extends Controller
             ], 401);
         }
 
-        if ($user->status !== 'active' || ($user->locked_until && now()->lessThan($user->locked_until))) {
+        if ($user->status !== 'active' || !$user->is_active || ($user->locked_until && now()->lessThan($user->locked_until))) {
             return response()->json([
                 'error' => 'ACCOUNT_LOCKED',
                 'message' => 'حساب کاربری قفل یا غیرفعال است.',

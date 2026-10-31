@@ -43,7 +43,7 @@ class AdminAuth
             ], 401);
         }
 
-        if ($user->status !== 'active' || ($user->locked_until && now()->lessThan($user->locked_until))) {
+        if ($user->status !== 'active' || !$user->is_active || ($user->locked_until && now()->lessThan($user->locked_until))) {
             return response()->json([
                 'error' => 'ACCOUNT_LOCKED',
                 'message' => 'Account is locked or disabled'

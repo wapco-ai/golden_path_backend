@@ -15,7 +15,7 @@ class EloquentAdminRepository implements AdminRepositoryInterface
 
         $q = User::query()
             ->where('is_admin', true)
-            ->with(['adminRoles:id,title']);
+            ->with(['adminRoles:id,title', 'adminAuth:user_id']);
 
         if ($search !== null && $search !== '') {
             $q->where(function ($w) use ($search) {
@@ -39,7 +39,7 @@ class EloquentAdminRepository implements AdminRepositoryInterface
     {
         return User::query()
             ->where('is_admin', true)
-            ->with(['adminRoles:id,title'])
+            ->with(['adminRoles:id,title', 'adminAuth:user_id'])
             ->findOrFail($id);
     }
 

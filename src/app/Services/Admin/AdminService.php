@@ -4,13 +4,13 @@ namespace App\Services\Admin;
 
 use App\Models\AdminAuth;
 use App\Models\AdminRole;
+use App\Models\AdminRefreshToken;
 use App\Models\User;
 use App\Repositories\Admin\AdminRepositoryInterface;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Str;
-use Illuminate\Support\Arr;
+use Illuminate\Validation\ValidationException;
 
 
 class AdminService
@@ -27,7 +27,7 @@ class AdminService
         return $this->repo->findOrFail($id);
     }
 
-    public function create(string $firstName, string $lastName, string $username, array $roles, ?string $email = null, ?string $password = null): User
+    public function create(string $firstName, string $lastName, string $username, array $roles, string $email, string $password): User
     {
         $firstName = trim($firstName);
         $lastName = trim($lastName);
@@ -42,7 +42,9 @@ class AdminService
             $user = new User();
             $user->name = trim($firstName . ' ' . $lastName);
             $user->username = $username;
-            $user->email = $email;
+            $user->email = trim($email);
+            $hashed = Hash::make($password);
+            $user->password = $hashed;
             $user->is_admin = true;
             $user->status = 'active';
             $user->is_active = true;
@@ -51,11 +53,11 @@ class AdminService
             $roleIds = $this->resolveRoleIdsByTitle($roles);
             $user->adminRoles()->sync($roleIds);
 
-            // Create admin auth record (no password field in UI)
+            // Store exactly the credential supplied by the administrator.
             AdminAuth::query()->updateOrCreate(
                 ['user_id' => $user->id],
                 [
-                    'password_hash' => Hash::make($password ?? Str::random(24)),
+                    'password_hash' => $hashed,
                     'mfa_enabled' => false,
                     'mfa_secret' => null,
                     'last_password_change_at' => now(),
@@ -101,6 +103,7 @@ class AdminService
                         'last_password_change_at' => now(),
                     ]
                 );
+                AdminRefreshToken::query()->where('user_id', $id)->whereNull('revoked_at')->update(['revoked_at' => now()]);
             }
 
             // persist changes (if any)
@@ -110,6 +113,36 @@ class AdminService
             if (array_key_exists('roles', $payload)) {
                 $roleIds = $this->resolveRoleIdsByTitle($payload['roles']);
                 $user->adminRoles()->sync($roleIds);
+            }
+
+            if (array_key_exists('status', $payload)) {
+                if ($payload['status'] === 'active') {
+                    // Legacy deletion removed roles and admin_auth. Require an
+                    // explicit recovery rather than enabling an unusable account.
+                    $errors = [];
+                    if (!filter_var($user->email, FILTER_VALIDATE_EMAIL)) {
+                        $errors['email'] = 'برای فعال‌سازی حساب، ایمیل معتبر وارد کنید.';
+                    }
+                    if (!$user->adminRoles()->exists()) {
+                        $errors['roles'] = 'برای فعال‌سازی حساب، حداقل یک نقش انتخاب کنید.';
+                    }
+                    if (!AdminAuth::query()->where('user_id', $id)->exists()) {
+                        $errors['password'] = 'برای فعال‌سازی این حساب، رمز عبور جدید وارد کنید.';
+                    }
+                    if ($errors) {
+                        throw ValidationException::withMessages($errors);
+                    }
+                    $user->status = 'active';
+                    $user->is_active = true;
+                    $user->locked_until = null;
+                    $user->failed_login_attempts = 0;
+                } else {
+                    // Suspension preserves credentials and roles for reactivation.
+                    $user->status = 'disabled';
+                    $user->is_active = false;
+                    AdminRefreshToken::query()->where('user_id', $id)->whereNull('revoked_at')->update(['revoked_at' => now()]);
+                }
+                $this->repo->save($user);
             }
 
             return $this->repo->findOrFail($user->id);

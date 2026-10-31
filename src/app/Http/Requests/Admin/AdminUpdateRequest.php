@@ -22,6 +22,7 @@ class AdminUpdateRequest extends FormRequest
 
             'email' => ['sometimes', 'email', 'max:255', 'unique:users,email,' . $id],
             'password' => ['sometimes', 'string', 'min:6', 'max:255'],
+            'status' => ['sometimes', 'required', 'in:active,inactive'],
         ];
     }
 
