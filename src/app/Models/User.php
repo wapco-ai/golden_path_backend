@@ -109,6 +109,14 @@ class User extends Authenticatable
             ->join('admin_role_permissions', 'admin_role_permissions.permission_id', '=', 'admin_permissions.id')
             ->join('admin_user_roles', 'admin_user_roles.role_id', '=', 'admin_role_permissions.role_id')
             ->where('admin_user_roles.user_id', $this->id)
+            // Old seeds grant every section permission to the dashboard role.
+            // Only explicit section roles may contribute those permissions.
+            ->where(function ($query) {
+                $query->whereNotIn('admin_user_roles.role_id', AdminRole::query()->select('id')
+                    ->where('code', 'super_dashboard_admin')
+                    ->orWhere('title', \App\Services\Admin\AdminAccess::SUPER_TITLE))
+                    ->orWhereIn('admin_permissions.code', ['super_dashboard_admin', 'manage_dashboard']);
+            })
             ->distinct();
     }
 }

@@ -26,7 +26,7 @@ class AdminSectionAccess
             'admin/support-feedbacks' => ['مدیریت بازخورد ها'],
             'admin/feedbacks' => ['مدیریت بازخورد ها'],
             'admin/comments' => ['مدیریت دیدگاه ها'],
-            'admin/dashboard' => ['مدیریت گزارشات'],
+            'admin/dashboard' => [AdminAccess::SUPER_TITLE, 'مدیریت گزارشات'],
             'admin/connectors' => ['مدیریت نقشه'],
             'admin/van' => ['مدیریت نقشه'],
             'admin/temp-block-areas' => ['مدیریت نقشه'],

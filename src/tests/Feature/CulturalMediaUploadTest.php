@@ -25,7 +25,7 @@ class CulturalMediaUploadTest extends TestCase
         \Illuminate\Support\Facades\Schema::create('admin_user_roles', function ($table) {
             $table->integer('user_id'); $table->integer('role_id');
         });
-        \Illuminate\Support\Facades\DB::table('admin_roles')->insert(['id' => 1, 'code' => 'super_dashboard_admin', 'title' => 'ادمین کل داشبورد']);
+        \Illuminate\Support\Facades\DB::table('admin_roles')->insert(['id' => 1, 'code' => 'manage_cultural_items', 'title' => 'مدیریت اطلاعات فرهنگی']);
         \Illuminate\Support\Facades\DB::table('admin_user_roles')->insert(['user_id' => 1, 'role_id' => 1]);
         $this->actingAs((new \App\Models\User())->forceFill(['id' => 1, 'is_admin' => true]));
         Storage::fake('public');
@@ -161,6 +161,8 @@ class CulturalMediaUploadTest extends TestCase
 
     public function test_other_entities_keep_existing_upload_policy_and_client_mime(): void
     {
+        \Illuminate\Support\Facades\DB::table('admin_roles')->insert(['id'=>2, 'code'=>'manage_map', 'title'=>'مدیریت نقشه']);
+        \Illuminate\Support\Facades\DB::table('admin_user_roles')->insert(['user_id'=>1, 'role_id'=>2]);
         $this->postFile($this->upload('tiny.bmp', 'existing.bmp', 'application/x-legacy', 6 * 1024 * 1024), 'images', 'areas')
             ->assertCreated()->assertJsonPath('mime', 'application/x-legacy')->assertJsonPath('entity_table', 'areas');
         $this->postFile($this->upload('tiny.bmp', 'too-large.bmp', 'image/bmp', 50 * 1024 * 1024 + 1), 'images', 'areas')

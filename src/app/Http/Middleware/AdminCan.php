@@ -23,12 +23,6 @@ class AdminCan
         $need = preg_split('/[|,]/', $required);
         $need = array_values(array_filter(array_map('trim', $need)));
 
-        // super dashboard admin bypass (نقش ادمین کل داشبورد)
-        if (method_exists($user, 'adminRoles') &&
-            $user->adminRoles()->where('code', 'super_dashboard_admin')->exists()) {
-            return $next($request);
-        }
-
         // 1) check roles
         $roleCodes = method_exists($user, 'adminRoles')
             ? $user->adminRoles()->pluck('code')->toArray()

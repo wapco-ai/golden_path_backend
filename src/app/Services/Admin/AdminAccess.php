@@ -10,28 +10,24 @@ class AdminAccess
 {
     public const SUPER_TITLE = 'ادمین کل داشبورد';
 
-    public static function isSuper(User $user): bool
-    {
-        return $user->adminRoles()->where(function ($q) {
-            $q->where('code', 'super_dashboard_admin')->orWhere('title', self::SUPER_TITLE);
-        })->exists();
-    }
-
     public static function hasAny(User $user, array $titles): bool
     {
-        return self::isSuper($user) || $user->adminRoles()->whereIn('title', $titles)->exists();
+        // The dashboard role is an independent checkbox, not an override for
+        // section roles that the administrator has explicitly removed.
+        return $user->adminRoles()->whereIn('title', $titles)->exists();
     }
 
-    /** A non-super administrator may manage only accounts and roles within their own authority. */
+    /** Administrators may manage only accounts and roles within their own authority. */
     public static function mayManage(User $actor, ?User $target, array $newTitles = []): bool
     {
-        if (self::isSuper($actor)) return true;
-        if ($target && self::isSuper($target)) return false;
-
         $owned = $actor->adminRoles()->pluck('admin_roles.id')->all();
         $existing = $target ? $target->adminRoles()->pluck('admin_roles.id')->all() : [];
+        // Match AdminService's normalization before checking grant authority.
+        $newTitles = array_values(array_unique(array_filter(array_map(
+            fn ($title) => is_string($title) ? trim($title) : '',
+            $newTitles
+        ), fn ($title) => $title !== '')));
         $requested = AdminRole::query()->whereIn('title', $newTitles)->pluck('id')->all();
-        return !in_array(self::SUPER_TITLE, $newTitles, true)
-            && count(array_diff(array_merge($existing, $requested), $owned)) === 0;
+        return count(array_diff(array_merge($existing, $requested), $owned)) === 0;
     }
 }
