@@ -25,7 +25,10 @@ class AdminResource extends JsonResource
             'avatar' => $this->avatar_url ?? null,
             // UI wants a display string (e.g. "۱۴۰۴ مرداد")
             'createdAt' => $this->createdAtDisplay($this->created_at),
-            'status' => ((bool)($this->is_active ?? false)) ? 'active' : 'inactive',
+            'status' => $this->status === 'active' && $this->is_active ? 'active' : 'inactive',
+            'requiresPasswordReset' => $this->relationLoaded('adminAuth')
+                ? $this->adminAuth === null
+                : !$this->adminAuth()->exists(),
         ];
     }
 

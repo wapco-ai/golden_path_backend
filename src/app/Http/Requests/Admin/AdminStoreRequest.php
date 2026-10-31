@@ -17,8 +17,8 @@ class AdminStoreRequest extends FormRequest
             'firstName' => ['required', 'string', 'max:120'],
             'lastName'  => ['required', 'string', 'max:120'],
             'username'  => ['required', 'string', 'max:80'],
-            'email'     => ['sometimes', 'nullable', 'email', 'max:255', 'unique:users,email'],
-            'password'  => ['sometimes', 'nullable', 'string', 'min:6', 'max:255'],
+            'email'     => ['required', 'email', 'max:255', 'unique:users,email'],
+            'password'  => ['required', 'string', 'min:6', 'max:255'],
             'roles'     => ['required', 'array', 'min:1'],
             'roles.*'   => ['string', 'max:120'],
         ];

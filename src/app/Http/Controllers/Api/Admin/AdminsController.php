@@ -52,8 +52,8 @@ class AdminsController extends Controller
             $data['lastName'],
             $data['username'],
             $data['roles'],
-            $data['email'] ?? null,
-            $data['password'] ?? null
+            $data['email'],
+            $data['password']
         );
 
         return response()->json((new AdminResource($admin))->toArray($request), 201);
