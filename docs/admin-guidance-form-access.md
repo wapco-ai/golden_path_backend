@@ -4,6 +4,8 @@ Every active sidebar form has an assignable role. The guidance-points form now
 uses `manage_guidance_points` (`مدیریت نقاط راهنما`) independently from
 `manage_map`. A single checkbox grants the whole form, including its read and
 write operations; this release introduces no operation-level checkboxes.
+The same grant protects generic file uploads/deletions in both the current
+`guidance_points` namespace and the legacy `poi_points` gallery namespace.
 
 The administrator add/edit forms use the same frontend role catalog as the
 section guards. The existing legacy aliases for registered users and dashboard

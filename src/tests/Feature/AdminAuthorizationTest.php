@@ -302,6 +302,46 @@ class AdminAuthorizationTest extends TestCase
         $this->patchJson('/api/v1/admin/admins/'.$id, ['roles'=>['مدیریت نقشه']], $this->token(1))->assertForbidden();
     }
 
+    public function test_guidance_images_require_the_guidance_role_in_current_and_legacy_file_namespaces(): void
+    {
+        Schema::create('guidance_points', function (Blueprint $t) {
+            $t->id(); $t->timestamp('deleted_at')->nullable(); $t->string('primary_image_url')->nullable(); $t->timestamps();
+        });
+        Schema::create('guidance_point_images', function (Blueprint $t) {
+            $t->id(); $t->integer('point_id'); $t->string('image_url'); $t->string('image_key'); $t->integer('sort_order'); $t->timestamps();
+        });
+        DB::table('guidance_points')->insert(['id'=>1]);
+        User::findOrFail(4)->adminRoles()->sync([13]);
+        foreach (['guidance_points', 'poi_points'] as $namespace) {
+            $payload = fn () => [
+                'entity_table'=>$namespace, 'entity_id'=>1, 'bucket'=>'images',
+                'file'=>new UploadedFile(__DIR__.'/../Fixtures/cultural-media/tiny.jpg', 'point.jpg', 'image/jpeg', null, true),
+            ];
+            $this->postJson('/api/v1/files', $payload(), $this->token(2))->assertForbidden();
+            $uploaded = $this->postJson('/api/v1/files', $payload(), $this->token(4))->assertCreated();
+            $path = $uploaded->json('path');
+            $this->assertTrue(Storage::disk('public')->exists($path));
+            if ($namespace === 'poi_points') {
+                $uploaded->assertJsonPath('attached', true);
+                $this->assertDatabaseHas('guidance_point_images', ['point_id'=>1, 'image_key'=>$path]);
+                $this->assertDatabaseHas('guidance_points', ['id'=>1, 'primary_image_url'=>$uploaded->json('url')]);
+            }
+            // Full storage URLs follow the same normalized-path authorization.
+            $inputPath = $namespace === 'poi_points' ? 'http://localhost/storage/'.$path : $path;
+            $deleteUrl = '/api/v1/files?'.http_build_query(['path'=>$inputPath]);
+            $this->deleteJson($deleteUrl, [], $this->token(2))->assertForbidden();
+            User::findOrFail(4)->adminRoles()->detach(13);
+            $this->deleteJson($deleteUrl, [], $this->token(4))->assertForbidden();
+            $this->postJson('/api/v1/files', $payload(), $this->token(4))->assertForbidden();
+            $this->assertTrue(Storage::disk('public')->exists($path));
+            User::findOrFail(4)->adminRoles()->attach(13);
+            $this->deleteJson($deleteUrl, [], $this->token(4))->assertOk()->assertJsonPath('file_deleted', true);
+            $this->assertFalse(Storage::disk('public')->exists($path));
+            $this->assertDatabaseMissing('guidance_point_images', ['image_key'=>$path]);
+            $this->assertDatabaseHas('guidance_points', ['id'=>1, 'primary_image_url'=>null]);
+        }
+    }
+
     public function test_dashboard_admin_cannot_restore_revoked_roles_or_grant_them_to_another_account(): void
     {
         User::findOrFail(3)->adminRoles()->attach(1);

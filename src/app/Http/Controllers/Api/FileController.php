@@ -359,7 +359,8 @@ class FileController extends Controller implements HasMiddleware
         $titles = match ($entityTable) {
             'contents' => ['مدیریت اطلاعات فرهنگی'],
             'categories' => ['مدیریت دسته بندی'],
-            'areas', 'doors', 'guidance_points', 'poi_points' => ['مدیریت نقشه'],
+            'areas', 'doors' => ['مدیریت نقشه'],
+            'guidance_points', 'poi_points' => [AdminAccess::GUIDANCE_TITLE],
             default => [],
         };
         return $titles && $request->user() && AdminAccess::hasAny($request->user(), $titles);
