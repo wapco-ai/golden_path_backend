@@ -9,6 +9,7 @@ use App\Models\AdminRole;
 class AdminAccess
 {
     public const SUPER_TITLE = 'ادمین کل داشبورد';
+    public const GUIDANCE_TITLE = 'مدیریت نقاط راهنما';
 
     public static function hasAny(User $user, array $titles): bool
     {

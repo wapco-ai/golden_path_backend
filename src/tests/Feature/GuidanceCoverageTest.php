@@ -20,7 +20,7 @@ class GuidanceCoverageTest extends TestCase
     {
         $request = Request::create('/api/v1/admin/guidance-points', 'POST', $data);
         $roles = Mockery::mock(BelongsToMany::class);
-        $roles->shouldReceive('whereIn')->with('title', ['مدیریت نقشه'])->andReturnSelf();
+        $roles->shouldReceive('whereIn')->with('title', ['مدیریت نقاط راهنما'])->andReturnSelf();
         $roles->shouldReceive('exists')->andReturnTrue();
         $admin = Mockery::mock(User::class)->makePartial();
         $admin->forceFill(['id'=>1, 'is_admin'=>true]);
