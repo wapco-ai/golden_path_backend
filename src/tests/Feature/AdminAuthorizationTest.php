@@ -34,7 +34,7 @@ class AdminAuthorizationTest extends TestCase
         });
         Schema::create('admin_roles', function (Blueprint $t) { $t->id(); $t->string('code'); $t->string('title'); });
         Schema::create('admin_user_roles', function (Blueprint $t) { $t->integer('user_id'); $t->integer('role_id'); });
-        Schema::create('admin_permissions', function (Blueprint $t) { $t->id(); $t->string('code'); });
+        Schema::create('admin_permissions', function (Blueprint $t) { $t->id(); $t->string('code'); $t->string('title')->nullable(); });
         Schema::create('admin_role_permissions', function (Blueprint $t) { $t->integer('role_id'); $t->integer('permission_id'); });
         Schema::create('admin_auth', function (Blueprint $t) { $t->integer('user_id'); $t->string('password_hash'); $t->boolean('mfa_enabled')->default(false); $t->string('mfa_secret')->nullable(); $t->timestamp('last_password_change_at')->nullable(); $t->timestamps(); });
         Schema::create('admin_login_logs', function (Blueprint $t) {
@@ -60,6 +60,7 @@ class AdminAuthorizationTest extends TestCase
             ['id'=>10, 'code'=>'manage_support_feedbacks', 'title'=>'مدیریت بازخورد ها'],
             ['id'=>11, 'code'=>'manage_comments', 'title'=>'مدیریت دیدگاه ها'],
             ['id'=>12, 'code'=>'manage_routing_logs', 'title'=>'مدیریت لاگ های مسیریابی'],
+            ['id'=>13, 'code'=>'manage_guidance_points', 'title'=>'مدیریت نقاط راهنما'],
         ]);
         foreach (DB::table('admin_roles')->get() as $role) {
             DB::table('admin_permissions')->insert(['id'=>$role->id, 'code'=>$role->code]);
@@ -207,13 +208,13 @@ class AdminAuthorizationTest extends TestCase
     public function test_unchecked_sections_are_revoked_with_the_same_token_while_dashboard_remains_selected(): void
     {
         $admin = User::findOrFail(3);
-        $admin->adminRoles()->sync(range(1, 12));
+        $admin->adminRoles()->sync(range(1, 13));
         $headers = $this->token(3);
         $originalPermissions = $this->getJson('/api/v1/admin/auth/me', $headers)->assertOk()->json('permissions');
         $this->assertContains('manage_map', $originalPermissions);
         $this->assertContains('manage_categories', $originalPermissions);
 
-        $selectedTitles = DB::table('admin_roles')->whereNotIn('id', [2, 5, 6])->pluck('title')->all();
+        $selectedTitles = DB::table('admin_roles')->whereNotIn('id', [2, 5, 6, 13])->pluck('title')->all();
         $this->patchJson('/api/v1/admin/admins/3', ['roles'=>$selectedTitles], $headers)->assertOk();
 
         $profile = $this->getJson('/api/v1/admin/auth/me', $headers)->assertOk()->json();
@@ -263,6 +264,42 @@ class AdminAuthorizationTest extends TestCase
         $admin->adminRoles()->detach(2);
         $this->assertSame(403, $gate->handle($request, $next, 'manage_map')->getStatusCode());
         $this->assertNotContains('manage_map', $admin->adminPermissions()->pluck('code')->all());
+    }
+
+    public function test_guidance_form_is_independent_from_map_and_has_one_grant_for_all_operations(): void
+    {
+        foreach ([2, 3] as $id) {
+            $this->getJson('/api/v1/admin/guidance-points', $this->token($id))->assertForbidden();
+            $this->postJson('/api/v1/admin/guidance-points', [], $this->token($id))->assertForbidden();
+            $this->putJson('/api/v1/admin/guidance-points/1', [], $this->token($id))->assertForbidden();
+            $this->deleteJson('/api/v1/admin/guidance-points/1', [], $this->token($id))->assertForbidden();
+        }
+        User::findOrFail(4)->adminRoles()->sync([13]);
+        $headers = $this->token(4);
+        $this->postJson('/api/v1/admin/guidance-points', [], $headers)->assertUnprocessable();
+        $this->postJson('/api/v1/doors', [], $headers)->assertForbidden();
+        $this->getJson('/api/v1/admin/van/nodes', $headers)->assertForbidden();
+        foreach (['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as $method) {
+            $this->assertSame([AdminAccess::GUIDANCE_TITLE], AdminSectionAccess::titlesFor('api/v1/admin/guidance-points/1', $method));
+        }
+        User::findOrFail(4)->adminRoles()->detach(13);
+        $this->postJson('/api/v1/admin/guidance-points', [], $headers)->assertForbidden();
+    }
+
+    public function test_guidance_role_can_be_delegated_and_returned_without_map_access(): void
+    {
+        User::findOrFail(1)->adminRoles()->attach(13);
+        $response = $this->postJson('/api/v1/admin/admins', [
+            'firstName'=>'Guidance', 'lastName'=>'Admin', 'username'=>'guidance-only',
+            'email'=>'guidance@example.test', 'password'=>'valid-pass-123', 'roles'=>[AdminAccess::GUIDANCE_TITLE],
+        ], $this->token(1))->assertCreated();
+        $id = $response->json('id');
+        $response->assertJsonPath('roles', [AdminAccess::GUIDANCE_TITLE]);
+        $profile = $this->getJson('/api/v1/admin/auth/me', $this->token($id))->assertOk();
+        $profile->assertJsonPath('roles', ['manage_guidance_points']);
+        $this->postJson('/api/v1/admin/guidance-points', [], $this->token($id))->assertUnprocessable();
+        $this->postJson('/api/v1/doors', [], $this->token($id))->assertForbidden();
+        $this->patchJson('/api/v1/admin/admins/'.$id, ['roles'=>['مدیریت نقشه']], $this->token(1))->assertForbidden();
     }
 
     public function test_dashboard_admin_cannot_restore_revoked_roles_or_grant_them_to_another_account(): void

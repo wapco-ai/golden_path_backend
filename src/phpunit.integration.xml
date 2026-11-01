@@ -23,6 +23,7 @@
             <file>tests/Feature/DashboardNotificationAdminTest.php</file>
             <file>tests/Feature/DashboardRecentUsersAdminTest.php</file>
             <file>tests/Feature/RazaviAuthPostgresTest.php</file>
+            <file>tests/Feature/GuidanceRoleMigrationTest.php</file>
         </testsuite>
     </testsuites>
     <source>

@@ -690,7 +690,7 @@ class GuidancePointController extends Controller
         }
 
         return $user instanceof \App\Models\User
-            && \App\Services\Admin\AdminAccess::hasAny($user, ['مدیریت نقشه']);
+            && \App\Services\Admin\AdminAccess::hasAny($user, [\App\Services\Admin\AdminAccess::GUIDANCE_TITLE]);
     }
 
     private function logAdmin(Request $request, string $action, ?int $entityId, array $meta): void

@@ -30,7 +30,7 @@ class AdminSectionAccess
             'admin/connectors' => ['مدیریت نقشه'],
             'admin/van' => ['مدیریت نقشه'],
             'admin/temp-block-areas' => ['مدیریت نقشه'],
-            'admin/guidance-points' => ['مدیریت نقشه'],
+            'admin/guidance-points' => [AdminAccess::GUIDANCE_TITLE],
             'areas' => ['مدیریت نقشه'],
             'doors' => ['مدیریت نقشه'],
             'cultural-items' => ['مدیریت اطلاعات فرهنگی'],

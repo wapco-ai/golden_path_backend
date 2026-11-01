@@ -8,7 +8,10 @@ Both role-code and role-title profiles follow this rule in the frontend.
 The backend checks the current database roles on each protected request, so an
 already-issued access token cannot restore a removed grant. Legacy permission
 rows attached to the dashboard role cannot confer unrelated section access.
-Guidance-point mutations require the explicit map-management role.
+Guidance points have an independent form-level role (`manage_guidance_points`,
+`مدیریت نقاط راهنما`). That one role permits listing, viewing, creating, updating
+and deleting guidance points. Map management does not imply guidance access,
+and guidance access does not imply map management.
 
 An administrator with `مدیریت ادمین ها` may only edit accounts and delegate roles
 within that administrator's own grants. Role titles are normalized before the
@@ -23,7 +26,9 @@ requests cannot restore superseded grants.
 
 ## Deployment
 
-No database migration or automatic role reassignment is required. Before rollout,
+The November 1 guidance-form release requires the data migration described in
+`admin-guidance-form-access.md`. The earlier explicit-section release required
+no database migration. Before rollout,
 verify that the designated administrator has the explicit section roles needed
 for daily work, especially `manage_admins` to manage other administrator accounts.
 Do not rely on dashboard membership alone. Existing checkbox selections remain
