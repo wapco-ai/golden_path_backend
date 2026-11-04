@@ -40,6 +40,11 @@ services:
       - redisdata:/data
     ports:
       - "6379:6379"
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     restart: unless-stopped
 
   app:
@@ -53,8 +58,12 @@ services:
       - ./src/docker-data/uploads:/var/www/html/storage/app/public/uploads
       - ./docker/app/uploads.ini:/usr/local/etc/php/conf.d/uploads.ini:ro
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+        restart: true
+      redis:
+        condition: service_healthy
+        restart: true
     environment:
       APP_ENV: local
       APP_DEBUG: "true"
@@ -80,8 +89,12 @@ services:
       - ./src/docker-data/uploads:/var/www/html/storage/app/public/uploads
       - ./docker/app/uploads.ini:/usr/local/etc/php/conf.d/uploads.ini:ro
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+        restart: true
+      redis:
+        condition: service_healthy
+        restart: true
     environment:
       APP_ENV: local
       APP_DEBUG: "true"
@@ -107,6 +120,7 @@ services:
       - ./src/public:/var/www/html/public:ro
       - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
       - ./src/docker-data/uploads:/var/www/html/storage/app/public/uploads
+      - ./src/storage/app/public/avatars:/var/www/html/storage/app/public/avatars:ro
     depends_on:
       - app
 
@@ -132,7 +146,9 @@ services:
       # سطح لاگ (info / debug / warn)
       - TS_LOG_LEVEL=info
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+        restart: true
     expose:
       - "7800"
     # اگر خواستی برای تست مستقیم هم در دسترس باشه، می‌تونی این رو هم اضافه کنی:

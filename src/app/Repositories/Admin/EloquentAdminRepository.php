@@ -35,10 +35,11 @@ class EloquentAdminRepository implements AdminRepositoryInterface
             );
     }
 
-    public function findOrFail(int $id): User
+    public function findOrFail(int $id, bool $forUpdate = false): User
     {
         return User::query()
             ->where('is_admin', true)
+            ->when($forUpdate, fn ($query) => $query->lockForUpdate())
             ->with(['adminRoles:id,title', 'adminAuth:user_id'])
             ->findOrFail($id);
     }

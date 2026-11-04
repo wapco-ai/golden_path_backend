@@ -69,6 +69,7 @@ Route::prefix('v1')->group(function () {
         Route::middleware(AdminAuth::class)->group(function () {
             Route::get('me', [AdminAuthController::class, 'me']);
             Route::post('logout', [AdminAuthController::class, 'logout']);
+            Route::post('change-password', [AdminAuthController::class, 'changePassword']);
         });
     });
 
