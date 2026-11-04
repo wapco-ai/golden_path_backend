@@ -155,6 +155,41 @@ class AdminAuthorizationTest extends TestCase
         $this->assertNull(DB::table('admin_refresh_tokens')->where('token', $login['refreshToken'])->value('revoked_at'));
     }
 
+    public function test_password_verification_limit_is_shared_by_account_across_tokens_and_ips(): void
+    {
+        $login = $this->passwordFixture();
+        $headers = ['Authorization' => 'Bearer '.$login['accessToken']];
+        $otherToken = ['Authorization' => 'Bearer '.app(JwtService::class)->createAccessToken([
+            'sub' => 1, 'role' => 'ADMIN', 'jti' => 'another-session',
+        ])];
+        $valid = ['current_password' => 'fixture-old-password', 'password' => 'fixture-new-password',
+            'password_confirmation' => 'fixture-new-password'];
+        $hash = DB::table('admin_auth')->where('user_id', 1)->value('password_hash');
+
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            $this->withServerVariables(['REMOTE_ADDR' => '198.51.100.'.($attempt + 1)])
+                ->postJson('/api/v1/admin/auth/change-password',
+                    array_merge($valid, ['current_password' => 'incorrect-password']),
+                    $attempt % 2 ? $headers : $otherToken)
+                ->assertUnprocessable()->assertJsonValidationErrors('current_password');
+        }
+        $blocked = $this->postJson('/api/v1/admin/auth/change-password', $valid, $headers)
+            ->assertStatus(429)->assertJsonPath('error', 'PASSWORD_CHANGE_RATE_LIMITED');
+        $this->assertGreaterThan(0, (int) $blocked->headers->get('Retry-After'));
+        $this->assertSame($hash, DB::table('users')->where('id', 1)->value('password'));
+        $this->assertSame($hash, DB::table('admin_auth')->where('user_id', 1)->value('password_hash'));
+        $this->assertNull(DB::table('admin_refresh_tokens')->where('token', $login['refreshToken'])->value('revoked_at'));
+
+        // Another account using the same IP has its own budget.
+        DB::table('users')->where('id', 2)->update(['password' => $hash]);
+        $this->postJson('/api/v1/admin/auth/change-password', $valid, $this->token(2))->assertOk();
+
+        $this->travel(61)->seconds();
+        $this->postJson('/api/v1/admin/auth/change-password', $valid, $otherToken)->assertOk();
+        $this->assertTrue(\Illuminate\Support\Facades\Hash::check('fixture-new-password',
+            DB::table('admin_auth')->where('user_id', 1)->value('password_hash')));
+    }
+
     private function token(int $id): array
     {
         return ['Authorization' => 'Bearer '.app(JwtService::class)->createAccessToken(['sub'=>$id, 'role'=>'ADMIN'])];

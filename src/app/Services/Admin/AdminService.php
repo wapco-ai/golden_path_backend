@@ -71,7 +71,7 @@ class AdminService
     public function updateRoles(int $id, array $roles): User
     {
         return DB::transaction(function () use ($id, $roles) {
-            $user = $this->repo->findOrFail($id);
+            $user = $this->repo->findOrFail($id, forUpdate: true);
             $roleIds = $this->resolveRoleIdsByTitle($roles);
             $user->adminRoles()->sync($roleIds);
             return $this->repo->findOrFail($user->id);
@@ -81,7 +81,8 @@ class AdminService
     public function updateAdmin(int $id, array $payload): User
     {
         return DB::transaction(function () use ($id, $payload) {
-            $user = $this->repo->findOrFail($id);
+            // All account mutations lock users before credentials, tokens or roles.
+            $user = $this->repo->findOrFail($id, forUpdate: true);
 
             // --- email update (users.email)
             if (array_key_exists('email', $payload)) {
@@ -171,7 +172,7 @@ class AdminService
     public function deleteAdmin(int $id): void
     {
         DB::transaction(function () use ($id) {
-            $user = $this->repo->findOrFail($id);
+            $user = $this->repo->findOrFail($id, forUpdate: true);
 
             // 1) Remove admin roles
             $user->adminRoles()->detach();

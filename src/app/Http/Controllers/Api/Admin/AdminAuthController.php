@@ -12,6 +12,7 @@ use App\Services\Admin\AdminService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Validation\ValidationException;
 
 class AdminAuthController extends Controller
@@ -283,6 +284,16 @@ class AdminAuthController extends Controller
             'password.min' => 'رمز عبور جدید باید حداقل ۶ کاراکتر باشد.',
             'password.confirmed' => 'رمز عبور جدید با تأیید آن مطابقت ندارد.',
         ]);
+
+        // Count verification attempts across access tokens and IPs for this account.
+        $attemptKey = 'admin-password-change:'.$request->user()->id;
+        if (RateLimiter::tooManyAttempts($attemptKey, 5)) {
+            return response()->json([
+                'error' => 'PASSWORD_CHANGE_RATE_LIMITED',
+                'message' => 'تعداد تلاش‌ها بیش از حد مجاز است. کمی بعد دوباره امتحان کنید.',
+            ], 429)->header('Retry-After', RateLimiter::availableIn($attemptKey));
+        }
+        RateLimiter::hit($attemptKey, 60);
 
         try {
             $admins->changeOwnPassword((int) $request->user()->id, $data['current_password'], $data['password']);
