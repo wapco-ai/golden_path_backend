@@ -250,6 +250,22 @@ class AdminAuthorizationTest extends TestCase
             ->assertOk()->assertJsonPath('avatarUrl', $url);
     }
 
+    public function test_file_download_never_renders_active_uploads_inline(): void
+    {
+        foreach ([
+            'page.html' => '<!doctype html><script>alert(document.domain)</script>',
+            'drawing.svg' => '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+            'unknown.txt' => 'plain text fixture',
+        ] as $name => $contents) {
+            $path = 'uploads/contents/1/files/'.$name;
+            Storage::disk('public')->put($path, $contents);
+            $response = $this->get('/api/v1/files?'.http_build_query(['path' => $path, 'inline' => 1]))
+                ->assertOk()->assertHeader('X-Content-Type-Options', 'nosniff');
+            $this->assertStringStartsWith('attachment;', $response->headers->get('Content-Disposition'));
+            $this->assertSame($contents, $response->streamedContent());
+        }
+    }
+
     public function test_admin_avatar_rejects_missing_auth_invalid_images_and_oversized_files(): void
     {
         $this->post('/api/v1/admin/auth/avatar', ['file' => $this->avatarFile()], ['Accept' => 'application/json'])->assertUnauthorized();

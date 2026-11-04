@@ -215,11 +215,15 @@ class FileController extends Controller implements HasMiddleware
         $downloadName = $data['as'] ?? basename($path);
         $downloadName = $this->sanitizeDownloadName($downloadName);
 
-        $headers = [];
         $mime = $disk->mimeType($path);
-        if ($mime) $headers['Content-Type'] = $mime;
+        $headers = [
+            'Content-Type' => $mime ?: 'application/octet-stream',
+            'X-Content-Type-Options' => 'nosniff',
+        ];
 
-        $inline = (bool)($data['inline'] ?? false);
+        // Generic uploads may contain HTML/SVG; only passive raster images may render on this origin.
+        $inline = (bool)($data['inline'] ?? false)
+            && in_array($mime, ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], true);
         $headers['Content-Disposition'] =
             ($inline ? 'inline' : 'attachment') . '; filename="' . $downloadName . '"';
 
