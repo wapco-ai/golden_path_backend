@@ -90,20 +90,7 @@ class AdminService
 
             // --- password update (admin_auth.password_hash + users.password fallback)
             if (array_key_exists('password', $payload)) {
-                $hashed = Hash::make((string)$payload['password']);
-
-                // users.password (fallback in AdminAuthController)
-                $user->password = $hashed;
-
-                // admin_auth.password_hash (primary in AdminAuthController)
-                AdminAuth::query()->updateOrCreate(
-                    ['user_id' => $user->id],
-                    [
-                        'password_hash' => $hashed,
-                        'last_password_change_at' => now(),
-                    ]
-                );
-                AdminRefreshToken::query()->where('user_id', $id)->whereNull('revoked_at')->update(['revoked_at' => now()]);
+                $this->updatePassword($user, (string) $payload['password']);
             }
 
             // persist changes (if any)
@@ -149,6 +136,37 @@ class AdminService
         });
     }
 
+
+    public function changeOwnPassword(int $userId, string $currentPassword, string $newPassword): void
+    {
+        DB::transaction(function () use ($userId, $currentPassword, $newPassword) {
+            $user = User::query()->whereKey($userId)->lockForUpdate()->firstOrFail();
+            $adminAuth = AdminAuth::query()->where('user_id', $userId)->first();
+            $passwordHash = $adminAuth?->password_hash ?? $user->password;
+
+            if (!$passwordHash || !Hash::check($currentPassword, $passwordHash)) {
+                throw ValidationException::withMessages([
+                    'current_password' => 'رمز عبور فعلی اشتباه است.',
+                ]);
+            }
+
+            $this->updatePassword($user, $newPassword);
+            $this->repo->save($user);
+        });
+    }
+
+    // Caller must hold a transaction; keep existing MFA settings intact.
+    private function updatePassword(User $user, string $password): void
+    {
+        $hashed = Hash::make($password);
+        $user->password = $hashed;
+        AdminAuth::query()->updateOrCreate(
+            ['user_id' => $user->id],
+            ['password_hash' => $hashed, 'last_password_change_at' => now()]
+        );
+        AdminRefreshToken::query()->where('user_id', $user->id)
+            ->whereNull('revoked_at')->update(['revoked_at' => now()]);
+    }
 
     public function deleteAdmin(int $id): void
     {

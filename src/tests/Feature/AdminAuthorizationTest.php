@@ -77,6 +77,84 @@ class AdminAuthorizationTest extends TestCase
         Storage::fake('public');
     }
 
+    private function passwordFixture(bool $withAdminAuth = true): array
+    {
+        $old = 'fixture-old-password';
+        $hash = \Illuminate\Support\Facades\Hash::make($old);
+        DB::table('users')->where('id', 1)->update(['password' => $hash]);
+        if ($withAdminAuth) {
+            DB::table('admin_auth')->insert(['user_id' => 1, 'password_hash' => $hash,
+                'mfa_enabled' => true, 'mfa_secret' => 'fixture-mfa', 'created_at' => now(), 'updated_at' => now()]);
+        }
+        return $this->postJson('/api/v1/admin/auth/login', ['usernameOrEmail' => 'test1', 'password' => $old])->assertOk()->json();
+    }
+
+    public function test_password_change_success_revokes_refresh_and_keeps_existing_access_until_expiry(): void
+    {
+        $login = $this->passwordFixture();
+        $headers = ['Authorization' => 'Bearer '.$login['accessToken']];
+        $response = $this->postJson('/api/v1/admin/auth/change-password', [
+            'current_password' => 'fixture-old-password', 'password' => 'fixture-new-password',
+            'password_confirmation' => 'fixture-new-password',
+        ], $headers)->assertOk()->assertExactJson(['message' => 'PASSWORD_CHANGED']);
+        $auth = DB::table('admin_auth')->where('user_id', 1)->first();
+        $this->assertTrue(\Illuminate\Support\Facades\Hash::check('fixture-new-password', $auth->password_hash));
+        $this->assertSame($auth->password_hash, DB::table('users')->where('id', 1)->value('password'));
+        $this->assertNotNull($auth->last_password_change_at);
+        $this->assertTrue((bool) $auth->mfa_enabled);
+        $this->assertSame('fixture-mfa', $auth->mfa_secret);
+        $this->assertDatabaseHas('admin_user_roles', ['user_id' => 1, 'role_id' => 1]);
+        $this->assertDatabaseHas('users', ['id' => 1, 'status' => 'active', 'is_active' => true]);
+        $this->postJson('/api/v1/admin/auth/refresh', ['refreshToken' => $login['refreshToken']])->assertUnauthorized();
+        $this->getJson('/api/v1/admin/auth/me', $headers)->assertOk();
+        $this->postJson('/api/v1/admin/auth/login', ['usernameOrEmail' => 'test1', 'password' => 'fixture-old-password'])->assertUnauthorized();
+        $this->postJson('/api/v1/admin/auth/login', ['usernameOrEmail' => 'test1', 'password' => 'fixture-new-password'])->assertOk();
+    }
+
+    public function test_password_change_rejects_invalid_requests_and_other_account_target(): void
+    {
+        $login = $this->passwordFixture();
+        $headers = ['Authorization' => 'Bearer '.$login['accessToken']];
+        $hash = DB::table('admin_auth')->where('user_id', 1)->value('password_hash');
+        $valid = ['current_password' => 'fixture-old-password', 'password' => 'fixture-new-password', 'password_confirmation' => 'fixture-new-password'];
+        $this->postJson('/api/v1/admin/auth/change-password', $valid)->assertUnauthorized();
+        $this->postJson('/api/v1/admin/auth/change-password', array_merge($valid, ['current_password' => 'wrong-password']), $headers)->assertUnprocessable()->assertJsonValidationErrors('current_password');
+        $this->postJson('/api/v1/admin/auth/change-password', array_merge($valid, ['password_confirmation' => 'mismatch']), $headers)->assertUnprocessable()->assertJsonValidationErrors('password');
+        $this->postJson('/api/v1/admin/auth/change-password', array_merge($valid, ['user_id' => 2]), $headers)->assertUnprocessable()->assertJsonValidationErrors('user_id');
+        $this->assertSame($hash, DB::table('admin_auth')->where('user_id', 1)->value('password_hash'));
+        $this->assertSame($hash, DB::table('users')->where('id', 1)->value('password'));
+        $this->assertNull(DB::table('users')->where('id', 2)->value('password'));
+        $this->assertNull(DB::table('admin_refresh_tokens')->where('token', $login['refreshToken'])->value('revoked_at'));
+    }
+
+    public function test_password_change_uses_login_fallback_and_primary_takes_precedence(): void
+    {
+        $login = $this->passwordFixture(false);
+        $headers = ['Authorization' => 'Bearer '.$login['accessToken']];
+        $valid = ['current_password' => 'fixture-old-password', 'password' => 'fixture-new-password', 'password_confirmation' => 'fixture-new-password'];
+        $this->postJson('/api/v1/admin/auth/change-password', $valid, $headers)->assertOk();
+        $this->assertTrue(\Illuminate\Support\Facades\Hash::check('fixture-new-password', DB::table('admin_auth')->where('user_id', 1)->value('password_hash')));
+        DB::table('users')->where('id', 1)->update(['password' => \Illuminate\Support\Facades\Hash::make('fallback-only')]);
+        $this->postJson('/api/v1/admin/auth/change-password', array_merge($valid, ['current_password' => 'fallback-only']), $headers)->assertUnprocessable();
+    }
+
+    public function test_password_change_rolls_back_all_writes_if_storage_fails(): void
+    {
+        $login = $this->passwordFixture();
+        $headers = ['Authorization' => 'Bearer '.$login['accessToken']];
+        $hash = DB::table('admin_auth')->where('user_id', 1)->value('password_hash');
+        DB::statement("CREATE TRIGGER reject_password_update BEFORE UPDATE OF password ON users BEGIN SELECT RAISE(FAIL, 'fixture failure'); END");
+        $response = $this->postJson('/api/v1/admin/auth/change-password', [
+            'current_password' => 'fixture-old-password', 'password' => 'fixture-new-password', 'password_confirmation' => 'fixture-new-password',
+        ], $headers)->assertStatus(500)->assertJsonPath('error', 'PASSWORD_CHANGE_FAILED');
+        $this->assertStringNotContainsString('fixture-new-password', $response->getContent());
+        $this->assertStringNotContainsString($hash, $response->getContent());
+        $this->assertSame($hash, DB::table('admin_auth')->where('user_id', 1)->value('password_hash'));
+        $this->assertSame($hash, DB::table('users')->where('id', 1)->value('password'));
+        $this->assertNull(DB::table('admin_auth')->where('user_id', 1)->value('last_password_change_at'));
+        $this->assertNull(DB::table('admin_refresh_tokens')->where('token', $login['refreshToken'])->value('revoked_at'));
+    }
+
     private function token(int $id): array
     {
         return ['Authorization' => 'Bearer '.app(JwtService::class)->createAccessToken(['sub'=>$id, 'role'=>'ADMIN'])];
