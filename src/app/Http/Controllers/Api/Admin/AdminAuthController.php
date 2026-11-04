@@ -13,6 +13,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 
 class AdminAuthController extends Controller
@@ -162,6 +163,8 @@ class AdminAuthController extends Controller
                     'username' => $user->username,
                     'name'     => $user->name,
                     'email'    => $user->email,
+                    'avatarUrl' => $user->avatar_url,
+                    'avatar' => $user->avatar_url,
                     'roles'    => $roles,
                     'roleTitles' => $user->adminRoles()->pluck('title')->values(),
                     'permissions' => $permissions,
@@ -266,7 +269,84 @@ class AdminAuthController extends Controller
             'status'   => $user->status,
             'lastLoginAt' => $user->last_login_at,
             'lastLoginIp' => $user->last_login_ip,
+            'avatarUrl' => $user->avatar_url,
+            'avatar' => $user->avatar_url,
         ]);
+    }
+
+    public function uploadAvatar(Request $request)
+    {
+        $request->validate([
+            'file' => 'required|file|image|mimes:jpeg,jpg,png,gif,webp|max:5120',
+            'user_id' => 'prohibited', 'userId' => 'prohibited',
+            'adminId' => 'prohibited', 'id' => 'prohibited',
+        ]);
+        $userId = (int) $request->user()->id;
+        $path = null;
+        try {
+            [$oldUrl, $url] = DB::transaction(function () use ($request, $userId, &$path) {
+                $user = User::query()->where('is_admin', true)->lockForUpdate()->findOrFail($userId);
+                // Reuse the shared uploads directory and PHP file response; no new Nginx mount is needed.
+                $path = $request->file('file')->store('uploads/admin_avatars/'.$userId, 'public');
+                if (!$path) {
+                    throw new \RuntimeException('Avatar storage failed.');
+                }
+                $url = '/api/v1/files?'.http_build_query(['path' => $path, 'inline' => 1], '', '&', PHP_QUERY_RFC3986);
+                $oldUrl = $user->avatar_url;
+                $user->avatar_url = $url;
+                $user->save();
+                return [$oldUrl, $url];
+            });
+        } catch (\Throwable $exception) {
+            if ($path) {
+                $this->deleteAdminAvatarFile('/api/v1/files?'.http_build_query(['path' => $path]), $userId);
+            }
+            report($exception);
+            return response()->json(['error' => 'AVATAR_UPLOAD_FAILED', 'message' => 'ذخیره تصویر پروفایل انجام نشد.'], 500);
+        }
+        $this->deleteAdminAvatarFile($oldUrl, $userId);
+        return response()->json(['url' => $url, 'avatarUrl' => $url]);
+    }
+
+    public function deleteAvatar(Request $request)
+    {
+        $request->validate([
+            'user_id' => 'prohibited', 'userId' => 'prohibited',
+            'adminId' => 'prohibited', 'id' => 'prohibited',
+        ]);
+        $userId = (int) $request->user()->id;
+        try {
+            $oldUrl = DB::transaction(function () use ($userId) {
+                $user = User::query()->where('is_admin', true)->lockForUpdate()->findOrFail($userId);
+                $oldUrl = $user->avatar_url;
+                $user->avatar_url = null;
+                $user->save();
+                return $oldUrl;
+            });
+        } catch (\Throwable $exception) {
+            report($exception);
+            return response()->json(['error' => 'AVATAR_DELETE_FAILED', 'message' => 'حذف تصویر پروفایل انجام نشد.'], 500);
+        }
+        $this->deleteAdminAvatarFile($oldUrl, $userId);
+        return response()->json(['message' => 'AVATAR_DELETED', 'url' => null, 'avatarUrl' => null]);
+    }
+
+    private function deleteAdminAvatarFile(?string $url, int $userId): void
+    {
+        if (!$url || !str_starts_with($url, '/api/v1/files?')) {
+            return;
+        }
+        parse_str(parse_url($url, PHP_URL_QUERY) ?: '', $query);
+        $path = $query['path'] ?? null;
+        if (!is_string($path) || !preg_match('#\Auploads/admin_avatars/'.$userId.'/[A-Za-z0-9_-]+\.(?:jpe?g|png|gif|webp)\z#', $path)) {
+            return;
+        }
+        try {
+            Storage::disk('public')->delete($path);
+        } catch (\Throwable $exception) {
+            // The saved account must not be rolled back just because old-file cleanup failed.
+            report($exception);
+        }
     }
 
     public function changePassword(Request $request, AdminService $admins)

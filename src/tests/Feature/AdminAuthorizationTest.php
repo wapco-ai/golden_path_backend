@@ -28,6 +28,7 @@ class AdminAuthorizationTest extends TestCase
             $t->string('email')->nullable(); $t->boolean('is_admin')->default(true);
             $t->boolean('is_active')->default(true); $t->string('status')->default('active');
             $t->string('password')->nullable();
+            $t->string('avatar_url')->nullable();
             $t->integer('failed_login_attempts')->default(0);
             $t->timestamp('last_login_at')->nullable(); $t->string('last_login_ip')->nullable();
             $t->timestamp('locked_until')->nullable(); $t->timestamps();
@@ -193,6 +194,104 @@ class AdminAuthorizationTest extends TestCase
     private function token(int $id): array
     {
         return ['Authorization' => 'Bearer '.app(JwtService::class)->createAccessToken(['sub'=>$id, 'role'=>'ADMIN'])];
+    }
+
+    private function avatarFile(): UploadedFile
+    {
+        return new UploadedFile(__DIR__.'/../Fixtures/cultural-media/tiny.jpg', 'avatar.jpg', 'image/jpeg', null, true);
+    }
+
+    private function avatarPath(string $url): string
+    {
+        parse_str(parse_url($url, PHP_URL_QUERY), $query);
+        return $query['path'];
+    }
+
+    public function test_admin_avatar_is_saved_served_replaced_and_deleted_for_own_account(): void
+    {
+        // Map-only administrators can manage their own avatar without account-management grants.
+        $headers = $this->token(2) + ['Accept' => 'application/json'];
+        $first = $this->post('/api/v1/admin/auth/avatar', ['file' => $this->avatarFile()], $headers)->assertOk()->json('url');
+        $path = $this->avatarPath($first);
+        $this->assertStringStartsWith('uploads/admin_avatars/2/', $path);
+        $this->assertTrue(Storage::disk('public')->exists($path));
+        $this->getJson('/api/v1/admin/auth/me', $headers)->assertOk()->assertJsonPath('avatarUrl', $first);
+        $this->assertNull(DB::table('users')->where('id', 1)->value('avatar_url'));
+        $image = $this->get($first)->assertOk()->assertHeader('Content-Type', 'image/jpeg');
+        $this->assertStringStartsWith('inline;', $image->headers->get('Content-Disposition'));
+        $this->assertSame(file_get_contents(__DIR__.'/../Fixtures/cultural-media/tiny.jpg'), $image->streamedContent());
+        $download = $this->get(str_replace('&inline=1', '', $first))->assertOk();
+        $this->assertStringStartsWith('attachment;', $download->headers->get('Content-Disposition'));
+        $this->deleteJson('/api/v1/files?'.http_build_query(['path' => $path]), [], $this->token(1))->assertStatus(400);
+        $this->assertTrue(Storage::disk('public')->exists($path));
+
+        $second = $this->post('/api/v1/admin/auth/avatar', ['file' => $this->avatarFile()], $headers)->assertOk()->json('url');
+        $this->assertNotSame($first, $second);
+        $this->assertFalse(Storage::disk('public')->exists($path));
+        $this->assertTrue(Storage::disk('public')->exists($this->avatarPath($second)));
+        $this->post('/api/v1/admin/auth/avatar', ['file' => $this->avatarFile(), 'user_id' => 1], $headers)
+            ->assertUnprocessable()->assertJsonValidationErrors('user_id');
+        $this->deleteJson('/api/v1/admin/auth/avatar', ['id' => 1], $headers)->assertUnprocessable();
+        $this->assertSame($second, DB::table('users')->where('id', 2)->value('avatar_url'));
+
+        $this->deleteJson('/api/v1/admin/auth/avatar', [], $headers)->assertOk();
+        $this->assertFalse(Storage::disk('public')->exists($this->avatarPath($second)));
+        $this->getJson('/api/v1/admin/auth/me', $headers)->assertOk()->assertJsonPath('avatarUrl', null);
+        $this->deleteJson('/api/v1/admin/auth/avatar', [], $headers)->assertOk();
+    }
+
+    public function test_admin_avatar_is_returned_after_a_new_login(): void
+    {
+        $url = $this->post('/api/v1/admin/auth/avatar', ['file' => $this->avatarFile()],
+            $this->token(1) + ['Accept' => 'application/json'])->assertOk()->json('url');
+        $login = $this->passwordFixture();
+        $this->assertSame($url, $login['user']['avatarUrl']);
+        $this->getJson('/api/v1/admin/auth/me', ['Authorization' => 'Bearer '.$login['accessToken']])
+            ->assertOk()->assertJsonPath('avatarUrl', $url);
+    }
+
+    public function test_admin_avatar_rejects_missing_auth_invalid_images_and_oversized_files(): void
+    {
+        $this->post('/api/v1/admin/auth/avatar', ['file' => $this->avatarFile()], ['Accept' => 'application/json'])->assertUnauthorized();
+        $this->deleteJson('/api/v1/admin/auth/avatar')->assertUnauthorized();
+        DB::table('users')->where('id', 3)->update(['is_admin' => false]);
+        $this->post('/api/v1/admin/auth/avatar', ['file' => $this->avatarFile()],
+            $this->token(3) + ['Accept' => 'application/json'])->assertUnauthorized();
+        foreach ([
+            UploadedFile::fake()->create('fake.png', 1, 'text/plain'),
+            UploadedFile::fake()->createWithContent('avatar.svg', '<svg xmlns="http://www.w3.org/2000/svg"></svg>'),
+            UploadedFile::fake()->create('large.jpg', 5121, 'image/jpeg'),
+        ] as $file) {
+            $this->post('/api/v1/admin/auth/avatar', ['file' => $file], $this->token(1) + ['Accept' => 'application/json'])
+                ->assertUnprocessable()->assertJsonValidationErrors('file');
+        }
+        $this->assertNull(DB::table('users')->where('id', 1)->value('avatar_url'));
+        $this->assertSame([], Storage::disk('public')->allFiles());
+    }
+
+    public function test_failed_avatar_writes_keep_the_previous_image_and_remove_uncommitted_files(): void
+    {
+        $headers = $this->token(1) + ['Accept' => 'application/json'];
+        $url = $this->post('/api/v1/admin/auth/avatar', ['file' => $this->avatarFile()], $headers)->assertOk()->json('url');
+        DB::statement("CREATE TRIGGER reject_avatar_update BEFORE UPDATE OF avatar_url ON users BEGIN SELECT RAISE(FAIL, 'fixture failure'); END");
+        $this->post('/api/v1/admin/auth/avatar', ['file' => $this->avatarFile()], $headers)
+            ->assertStatus(500)->assertJsonPath('error', 'AVATAR_UPLOAD_FAILED');
+        $this->deleteJson('/api/v1/admin/auth/avatar', [], $headers)
+            ->assertStatus(500)->assertJsonPath('error', 'AVATAR_DELETE_FAILED');
+        $this->assertSame($url, DB::table('users')->where('id', 1)->value('avatar_url'));
+        $this->assertSame([$this->avatarPath($url)], Storage::disk('public')->allFiles());
+    }
+
+    public function test_avatar_cleanup_cannot_delete_another_accounts_file_or_follow_parent_paths(): void
+    {
+        $otherPath = 'uploads/admin_avatars/2/other.jpg';
+        Storage::disk('public')->put($otherPath, 'other account fixture');
+        foreach ([$otherPath, 'uploads/admin_avatars/1/../2/other.jpg'] as $oldPath) {
+            DB::table('users')->where('id', 1)->update(['avatar_url' => '/api/v1/files?'.http_build_query(['path' => $oldPath])]);
+            $this->post('/api/v1/admin/auth/avatar', ['file' => $this->avatarFile()],
+                $this->token(1) + ['Accept' => 'application/json'])->assertOk();
+            $this->assertTrue(Storage::disk('public')->exists($otherPath));
+        }
     }
 
     public function test_admin_routes_require_their_explicit_section_even_for_dashboard_admin(): void
