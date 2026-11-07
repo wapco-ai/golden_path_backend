@@ -12,6 +12,8 @@ use App\Services\I18nTextService;
 
 class AreaAdminController extends Controller
 {
+    private const PUBLIC_ACCESS_RESTRICTION = 'system:area-public-access';
+
     /**
      * GET /api/v1/areas
      *
@@ -354,7 +356,9 @@ class AreaAdminController extends Controller
     }
 
     /**
-     * PUT /api/v1/admin/areas/{id}
+     * PUT /api/v1/areas/{id}
+     *
+     * public_access updates both the map metadata and the routing restriction.
      *
      * اگر time_restrictions / prayer_restrictions در body باشند:
      *  - در attrs جایگزین می‌شن
@@ -385,6 +389,7 @@ class AreaAdminController extends Controller
 
                 'time_restrictions'           => 'sometimes|array',
                 'prayer_restrictions'         => 'sometimes|array',
+                'public_access'                => 'sometimes|required|boolean',
 
                 'geometry'                    => 'sometimes|array',
                 'meta.area_type'              => 'sometimes|string|max:50',
@@ -449,25 +454,30 @@ class AreaAdminController extends Controller
 
 
 
-        $exists = DB::table('areas')->where('id', $id)->exists();
-        if (!$exists) {
-            return response()->json([
-                'message' => 'Area not found',
-            ], Response::HTTP_NOT_FOUND);
-        }
-
         return DB::transaction(function () use ($data, $id, $derivedAllowedGender, $derivedIsClosed) {
 
-            $currentAttrs = DB::table('areas')
+            $currentArea = DB::table('areas')
                 ->where('id', $id)
-                ->value('attrs');
+                ->lockForUpdate()
+                ->first(['attrs']);
 
-            $attrs = $currentAttrs ? json_decode($currentAttrs, true) : [];
+            if (!$currentArea) {
+                return response()->json([
+                    'message' => 'Area not found',
+                ], Response::HTTP_NOT_FOUND);
+            }
+
+            $attrs = json_decode($currentArea->attrs ?? '{}', true) ?? [];
 
             foreach (['basic_info', 'grouping', 'operational', 'time_restrictions', 'prayer_restrictions'] as $key) {
                 if (array_key_exists($key, $data)) {
                     $attrs[$key] = $data[$key];
                 }
+            }
+            $publicAccess = isset($data['public_access']) ? (bool) $data['public_access'] : null;
+            if ($publicAccess !== null) {
+                $attrs['access_policy'] = (array) ($attrs['access_policy'] ?? []);
+                $attrs['access_policy']['public_access'] = $publicAccess;
             }
 
             $sets     = [];
@@ -528,6 +538,10 @@ class AreaAdminController extends Controller
 
             $row = DB::selectOne($sql, $bindings);
 
+            if ($publicAccess !== null) {
+                $this->syncPublicAccessRestriction((int) $id, $publicAccess, $row->area_type, $attrs);
+            }
+
             // i18n
             if (array_key_exists('basic_info', $data)) {
                 $this->upsertI18nTitleDesc('areas', $id, $data['basic_info']);
@@ -545,6 +559,58 @@ class AreaAdminController extends Controller
         });
     }
 
+    private function syncPublicAccessRestriction(int $id, bool $publicAccess, string $areaType, array $attrs): void
+    {
+        $restrictions = DB::table('admin_restrictions')
+            ->where('target_table', 'areas')
+            ->where('target_id', $id);
+        $privacy = (clone $restrictions)->where('created_by', self::PUBLIC_ACCESS_RESTRICTION);
+
+        if (!$publicAccess) {
+            if (!$privacy->exists()) {
+                DB::table('admin_restrictions')->insert([
+                    'target_table' => 'areas',
+                    'target_id' => $id,
+                    'restrict_type' => 'close',
+                    'reason' => 'Private area',
+                    'created_by' => self::PUBLIC_ACCESS_RESTRICTION,
+                ]);
+            }
+
+            return;
+        }
+
+        $privacy->delete();
+
+        // The GIS import used one closure for ownership and any prohibited modes.
+        $declaredModes = $attrs['import_review']['declared_modes'] ?? null;
+        if (($attrs['source_ref']['dataset'] ?? null) !== 'fava14050813'
+            || ($attrs['access_policy']['source_explicit_denial'] ?? false)
+            || !is_array($declaredModes)) {
+            return;
+        }
+
+        $legacy = $restrictions
+            ->whereNull('created_by')
+            ->whereNull('geom')
+            ->where('restrict_type', 'close')
+            ->where('reason', 'Fava 14050813: non-public or explicit visitor prohibition');
+        $deniedModes = array_diff(['walk', 'wheelchair', 'van'], $declaredModes);
+        if ($areaType === 'stair_area' && !in_array('wheelchair', $deniedModes, true)) {
+            $deniedModes[] = 'wheelchair';
+        }
+
+        if (!$deniedModes) {
+            $legacy->delete();
+        } else {
+            $legacy->update([
+                'modes' => '{'.implode(',', $deniedModes).'}',
+                'reason' => 'Fava 14050813: source transport-mode prohibition',
+                'updated_at' => now(),
+            ]);
+        }
+    }
+
     /**
      * DELETE /api/v1/admin/areas/{id}
      *
@@ -553,6 +619,10 @@ class AreaAdminController extends Controller
     public function destroy($id)
     {
         DB::transaction(function () use ($id) {
+            $area = DB::table('areas')->where('id', $id);
+            if (!(clone $area)->lockForUpdate()->first(['id'])) {
+                throw new \RuntimeException('Area not found');
+            }
 
             DB::table('i18n_texts')
                 ->where('entity_table', 'areas')
@@ -569,13 +639,13 @@ class AreaAdminController extends Controller
                 ->where('entity_id', $id)
                 ->delete();
 
-            $deleted = DB::table('areas')
-                ->where('id', $id)
+            DB::table('admin_restrictions')
+                ->where('target_table', 'areas')
+                ->where('target_id', $id)
+                ->where('created_by', self::PUBLIC_ACCESS_RESTRICTION)
                 ->delete();
 
-            if (!$deleted) {
-                throw new \RuntimeException('Area not found');
-            }
+            $area->delete();
         });
 
         return response()->json([
