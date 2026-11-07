@@ -66,9 +66,14 @@ class RebuildDoorGraphJob implements ShouldQueue, ShouldBeUnique
 
     private function validateSingleSidedStop(?string $result): bool
     {
-        // A landing can join the walkable graph without a same-floor door transition.
+        // A landing needs a local edge only when its area has other graph nodes.
+        // In a single-node area the route can reach the landing directly.
         $stop = DB::selectOne(
-            'SELECT EXISTS (
+            'SELECT n.node_id IS NOT NULL AND (NOT EXISTS (
+                SELECT 1
+                FROM public.routing_nodes peer
+                WHERE peer.floor = n.floor AND peer.area_id = n.area_id AND peer.id <> n.node_id
+            ) OR EXISTS (
                 SELECT 1
                 FROM public.routing_edges_static e
                 JOIN public.routing_nodes peer ON peer.id = CASE WHEN e.src = n.node_id THEN e.dst ELSE e.src END
@@ -76,7 +81,7 @@ class RebuildDoorGraphJob implements ShouldQueue, ShouldBeUnique
                   AND e.floor = n.floor AND peer.floor = n.floor AND peer.area_id = n.area_id
                   AND peer.id <> n.node_id AND e.base_cost > 0
                   AND e.geom IS NOT NULL AND NOT ST_IsEmpty(e.geom)
-            ) AS connected
+            )) AS connected
             FROM public.routing_connector_stops s
             LEFT JOIN public.routing_connector_nodes n ON n.id = s.id
             LEFT JOIN public.routing_nodes rn ON rn.id = n.node_id

@@ -143,6 +143,8 @@ class MultiFloorConnectorTest extends TestCase
         $this->assertSame('NO_PATH', $this->route(0, -1)['status']);
         foreach ($connector['stops'] as $stop) {
             (new RebuildDoorGraphJob($stop['door_id']))->handle();
+            // Production jobs commit separately, dropping this scratch table after each job.
+            DB::statement('DROP TABLE IF EXISTS pg_temp.tmp_door_affected_areas');
             $this->assertSame('ready', DB::table('doors')->where('id', $stop['door_id'])->value('attrs->graph->status'));
         }
 
