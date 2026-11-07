@@ -85,13 +85,6 @@ class DeleteDoorGraphJob implements ShouldQueue, ShouldBeUnique
             DB::table('doors')
                 ->where('id', $doorId)
                 ->delete();
-
-            /*
-             * چون mv_area_door_stats روی تعداد درب‌های هر area اثر دارد،
-             * بعد از حذف فیزیکی درب refresh می‌شود.
-             * CONCURRENTLY داخل transaction مجاز نیست؛ پس همین REFRESH عادی مناسب است.
-             */
-            DB::statement('REFRESH MATERIALIZED VIEW public.mv_area_door_stats');
         });
     }
 
