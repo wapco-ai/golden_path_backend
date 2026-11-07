@@ -2,26 +2,28 @@
 -- Dependencies: public.routing_edges_static, public.routing_nodes, public.areas, PostGIS.
 -- Object: public.fn_routing_edges_static_mvt(integer,integer,integer,smallint).
 -- Routing impact: display only, preserves stored edges and route geometry.
+-- The tiles role can execute this function without read access to routing_nodes.
 -- Rollback: apply the matching down migration.
 
 BEGIN;
 
 CREATE OR REPLACE FUNCTION public.fn_routing_edges_static_mvt(z integer, x integer, y integer, p_floor smallint DEFAULT NULL::smallint) RETURNS bytea
-    LANGUAGE plpgsql STABLE
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path = pg_catalog, pg_temp
     AS $$
 DECLARE
-  tile_bbox_3857  geometry;
-  tile_bbox_32640 geometry;
+  tile_bbox_3857  public.geometry;
+  tile_bbox_32640 public.geometry;
 BEGIN
-  tile_bbox_3857  := ST_TileEnvelope(z, x, y);
-  tile_bbox_32640 := ST_Transform(tile_bbox_3857, 32640);
+  tile_bbox_3857  := public.ST_TileEnvelope(z, x, y);
+  tile_bbox_32640 := public.ST_Transform(tile_bbox_3857, 32640);
 
   RETURN (
-    SELECT ST_AsMVT(t, 'routing_edges_static', 4096, 'geom')
+    SELECT public.ST_AsMVT(t, 'routing_edges_static', 4096, 'geom')
     FROM (
       SELECT
-        ST_AsMVTGeom(
-          ST_Transform(e.geom, 3857),
+        public.ST_AsMVTGeom(
+          public.ST_Transform(e.geom, 3857),
           tile_bbox_3857,
           4096,
           64,
@@ -45,8 +47,8 @@ BEGIN
       FROM public.routing_edges_static e
       WHERE
         (p_floor IS NULL OR e.floor = p_floor)
-        AND e.geom && tile_bbox_32640
-        AND ST_Intersects(e.geom, tile_bbox_32640)
+        AND e.geom OPERATOR(public.&&) tile_bbox_32640
+        AND public.ST_Intersects(e.geom, tile_bbox_32640)
         AND NOT EXISTS (
           SELECT 1
           FROM public.routing_nodes n

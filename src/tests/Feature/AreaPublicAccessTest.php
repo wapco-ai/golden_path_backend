@@ -28,6 +28,13 @@ class AreaPublicAccessTest extends TestCase
         $this->buildEdge($area, $neighbor);
         $this->assertTrue($this->allows($area, 'walk'));
         $this->assertGreaterThan(0, $this->tileSize());
+        DB::statement('CREATE ROLE area_access_tile_test NOLOGIN');
+        DB::statement('SET LOCAL ROLE area_access_tile_test');
+        try {
+            $this->assertGreaterThan(0, $this->tileSize());
+        } finally {
+            DB::statement('RESET ROLE');
+        }
 
         $this->putJson("/api/v1/areas/{$area}", ['public_access' => false])->assertOk();
         $this->putJson("/api/v1/areas/{$area}", ['public_access' => false])->assertOk();
