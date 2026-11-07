@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Http\Middleware\AdminAuth;
+use App\Jobs\RebuildDoorGraphJob;
 use App\Services\ConnectorService;
 use App\Services\MultiFloorRoutingService;
 use Illuminate\Support\Facades\DB;
@@ -115,6 +116,47 @@ class MultiFloorConnectorTest extends TestCase
         $this->assertCount(2,array_filter($r['steps'],fn($s)=>$s['type']==='stepChangeFloor'));
         $this->assertSame('NO_PATH',$this->route(1,-1)['status']);
         $this->assertSame('NO_PATH',$this->route(-1,1,'wheelchair')['status']);
+    }
+
+    public function test_queued_single_sided_escalator_stops_rebuild_and_route_downstairs(): void
+    {
+        $payload = $this->payload('escalator');
+        $payload['direction'] = 'forward';
+        $payload['info']['operational']['transport_modes'] = ['walk'];
+        $payload['stops'] = [$payload['stops'][1], $payload['stops'][0]];
+        $connector = $this->create($payload);
+
+        foreach ([0, -1] as $floor) {
+            // Each landing needs a nearby walkable graph node in the same area.
+            DB::statement("WITH peer AS (
+                INSERT INTO doors(geom, from_area, floor)
+                VALUES (ST_GeomFromText('LINESTRING(500010 4000004,500010 4000006)',32640), ?, ?)
+                RETURNING id, from_area, floor
+            )
+            INSERT INTO door_access_points(door_id, geom, floor, from_area, needs_review)
+            SELECT id, ST_SetSRID(ST_MakePoint(500010,4000005),32640), floor, from_area, false FROM peer",
+                [$this->areas[$floor], $floor]);
+            DB::select('SELECT fn_build_routing_nodes(?::smallint)', [$floor]);
+        }
+        DB::statement('REFRESH MATERIALIZED VIEW mv_area_door_stats');
+
+        $this->assertSame('NO_PATH', $this->route(0, -1)['status']);
+        foreach ($connector['stops'] as $stop) {
+            (new RebuildDoorGraphJob($stop['door_id']))->handle();
+            // Production jobs commit separately, dropping this scratch table after each job.
+            DB::statement('DROP TABLE IF EXISTS pg_temp.tmp_door_affected_areas');
+            $this->assertSame('ready', DB::table('doors')->where('id', $stop['door_id'])->value('attrs->graph->status'));
+        }
+
+        $route = $this->route(0, -1);
+        $this->assertSame('OK', $route['status']);
+        $transfers = array_values(array_filter($route['steps'], fn ($step) => $step['type'] === 'stepChangeFloor'));
+        $this->assertCount(1, $transfers);
+        $this->assertSame($connector['id'], $transfers[0]['connectorId']);
+        $this->assertSame('escalator', $transfers[0]['connectorType']);
+        $this->assertSame(0, $transfers[0]['fromFloor']);
+        $this->assertSame(-1, $transfers[0]['toFloor']);
+        $this->assertSame('NO_PATH', $this->route(-1, 0)['status']);
     }
 
     public function test_wait_is_not_repeated_at_a_closed_intermediate_lift_stop(): void
@@ -243,7 +285,7 @@ class MultiFloorConnectorTest extends TestCase
           SELECT id,ST_SetSRID(ST_MakePoint(500020,4000005),32640),0,?,?,false FROM d RETURNING door_id",
           [$this->areas[0],$next,$this->areas[0],$next])->door_id;
         $this->rebuild();
-        (new \App\Jobs\RebuildDoorGraphJob($door))->handle();
+        (new RebuildDoorGraphJob($door))->handle();
         $destination=DB::selectOne('SELECT ST_X(g) lon, ST_Y(g) lat FROM (SELECT ST_Transform(ST_SetSRID(ST_MakePoint(500030,4000005),32640),4326) g) p');
         $service=app(MultiFloorRoutingService::class);
         $r=$service->route('both','walk',0,0,$this->point,(array)$destination,'fa',0);
