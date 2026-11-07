@@ -8,7 +8,7 @@ A connector already shared across floors can be reclassified from `stair` to the
 
 Elevators permit direct journeys between all accessible served stops, with one waiting charge per boarding. Stairs, ramps and escalators link consecutive landings only. Direction is relative to the displayed stop order. Wheelchairs cannot traverse stairs/escalators. Existing per-door time, prayer, gender and mode rules apply at boarding/alighting points. A closed intermediate elevator landing does not force passengers to exit there. Incomplete or rebuilding connectors are not used.
 
-The admin API writes the group and all stops atomically and uses an optimistic version to prevent stale edits. New point geometry and metadata are committed together. Standard doors retain their existing API; connected doors are edited through the shared connector endpoint.
+The admin API writes the group and all stops atomically and uses an optimistic version to prevent stale edits. Each stop requires the ID of an existing door access point on its own floor. The selected walkable area must be one of the areas served by that point. Register a missing entrance through the door workflow before adding it as a stop. Standard doors retain their existing API; connected doors are edited through the shared connector endpoint.
 
 Route responses preserve ordered floor segments and explicit transfers. Transfer geometry is null (in particular, a lift with identical XY must not disappear). Per-floor geometries come only from routing edges. The client must not run the floor-unaware local fallback after a multi-floor routing failure.
 

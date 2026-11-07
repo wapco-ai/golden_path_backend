@@ -13,6 +13,7 @@ use Tests\TestCase;
 class MultiFloorConnectorTest extends TestCase
 {
     private array $areas = [];
+    private array $accessPoints = [];
     private array $point;
 
     protected function setUp(): void
@@ -28,6 +29,14 @@ class MultiFloorConnectorTest extends TestCase
               ST_Multi(ST_GeomFromText('POLYGON((500000 4000000,500020 4000000,500020 4000020,500000 4000020,500000 4000000))',32640)),
               'courtyard',?) RETURNING id", [$floor]);
             $this->areas[$floor] = $row->id;
+            $this->accessPoints[$floor] = DB::selectOne("WITH d AS (
+                INSERT INTO doors(geom, from_area, floor)
+                VALUES (ST_GeomFromText('LINESTRING(500005 4000004,500005 4000006)',32640), ?, ?)
+                RETURNING id, from_area, floor
+            )
+            INSERT INTO door_access_points(door_id, geom, floor, from_area, needs_review)
+            SELECT id, ST_SetSRID(ST_MakePoint(500005,4000005),32640), floor, from_area, false FROM d RETURNING id",
+                [$row->id, $floor])->id;
         }
         $point = DB::selectOne('SELECT ST_X(g) AS lon,ST_Y(g) AS lat FROM (SELECT ST_Transform(ST_SetSRID(ST_MakePoint(500005,4000005),32640),4326) g) p');
         $this->point = ['lat'=>(float)$point->lat,'lon'=>(float)$point->lon];
@@ -47,7 +56,7 @@ class MultiFloorConnectorTest extends TestCase
                 'operational'=>['status'=>'active','place_function'=>$kind,
                     'transport_modes'=>$kind==='stair'?['walk']:['walk','wheelchair'],'gender_access'=>['both']],
                 'time_restrictions'=>[],'prayer_restrictions'=>[]],
-            'stops'=>array_map(fn ($floor)=>['floor'=>$floor,'travel_seconds'=>8]+$this->point,[-1,0,1])];
+            'stops'=>array_map(fn ($floor)=>['floor'=>$floor,'travel_seconds'=>8,'access_id'=>$this->accessPoints[$floor]],[-1,0,1])];
     }
 
     private function create(array $payload = []): array
@@ -75,10 +84,15 @@ class MultiFloorConnectorTest extends TestCase
 
     public function test_three_stop_lift_resolves_areas_and_is_shared_from_every_stop(): void
     {
+        $doorCount = DB::table('doors')->count();
+        $accessCount = DB::table('door_access_points')->count();
         $c=$this->create();
         $this->assertCount(3,$c['stops']);
+        $this->assertSame($doorCount, DB::table('doors')->count());
+        $this->assertSame($accessCount, DB::table('door_access_points')->count());
         foreach ($c['stops'] as $stop) {
             $this->assertSame($this->areas[$stop['floor']],$stop['area_id']);
+            $this->assertSame($this->accessPoints[$stop['floor']], $stop['access_id']);
             $this->getJson('/api/v1/doors/'.$stop['door_id'].'/info')->assertOk()->assertJsonPath('connector.id',$c['id']);
         }
         $this->assertSame('NO_PATH',$this->route()['status']); // queued nodes are never active
@@ -175,28 +189,49 @@ class MultiFloorConnectorTest extends TestCase
         $p['version']=$c['version']+1;
         $this->putJson('/api/v1/admin/connectors/'.$c['id'],$p)->assertStatus(409);
         $before=DB::table('doors')->count();
-        $p=$this->payload(); $p['stops'][2]['lon']=0;
-        $this->postJson('/api/v1/admin/connectors',$p)->assertUnprocessable();
+        $p['version']=$c['version']; $p['stops'][2]['access_id']=PHP_INT_MAX;
+        $this->putJson('/api/v1/admin/connectors/'.$c['id'], $p)->assertUnprocessable()
+            ->assertJsonValidationErrors('stops.2.access_id');
         $this->assertSame($before,DB::table('doors')->count());
         $this->assertSame(1,DB::table('routing_connectors')->count());
+        $this->assertSame($c['version'], DB::table('routing_connectors')->where('id', $c['id'])->value('version'));
     }
 
     public function test_floor_mismatch_and_wheelchair_on_stairs_are_rejected(): void
     {
-        $c=$this->create(); $p=$this->payload('stair');
+        $this->withoutMiddleware([AdminAuth::class, \App\Http\Middleware\AdminSectionAccess::class]);
+        $p=$this->payload('stair');
         $p['info']['operational']['transport_modes']=['walk','wheelchair'];
-        $this->postJson('/api/v1/admin/connectors',$p)->assertUnprocessable();
-        $p=$this->payload(); $p['stops'][0]['access_id']=$c['stops'][1]['access_id'];
-        $this->postJson('/api/v1/admin/connectors',$p)->assertUnprocessable();
+        $this->postJson('/api/v1/admin/connectors',$p)->assertUnprocessable()
+            ->assertJsonValidationErrors('info.operational.transport_modes');
+        $p=$this->payload(); $p['stops'][0]['access_id']=$this->accessPoints[1];
+        array_pop($p['stops']);
+        $this->postJson('/api/v1/admin/connectors',$p)->assertUnprocessable()
+            ->assertJsonValidationErrors('stops.0.access_id');
     }
 
     public function test_ambiguous_area_requires_explicit_valid_candidate(): void
     {
-        DB::statement('INSERT INTO areas(geom,area_type,floor) SELECT geom,area_type,floor FROM areas WHERE id=?',[$this->areas[0]]);
+        $second = DB::selectOne('INSERT INTO areas(geom,area_type,floor) SELECT geom,area_type,floor FROM areas WHERE id=? RETURNING id', [$this->areas[0]]);
+        DB::table('door_access_points')->where('id', $this->accessPoints[0])->update(['to_area' => $second->id]);
         $this->withoutMiddleware([AdminAuth::class, \App\Http\Middleware\AdminSectionAccess::class]);
         $this->postJson('/api/v1/admin/connectors',$this->payload())->assertUnprocessable()->assertJsonValidationErrors('stops.1.area_id');
         $p=$this->payload(); $p['stops'][1]['area_id']=$this->areas[0];
         $this->create($p);
+    }
+
+    public function test_coordinate_only_stops_are_rejected_without_creating_doors(): void
+    {
+        $this->withoutMiddleware([AdminAuth::class, \App\Http\Middleware\AdminSectionAccess::class]);
+        $before = DB::table('doors')->count();
+        $payload = $this->payload();
+        $payload['stops'][1] = ['floor' => 0] + $this->point;
+        $this->getJson('/api/v1/admin/connectors/candidates?'.http_build_query($payload['stops'][1]))
+            ->assertUnprocessable()->assertJsonValidationErrors('access_id');
+        $this->postJson('/api/v1/admin/connectors', $payload)
+            ->assertUnprocessable()->assertJsonValidationErrors('stops.1.access_id');
+        $this->assertSame($before, DB::table('doors')->count());
+        $this->assertSame(0, DB::table('routing_connectors')->count());
     }
 
     public function test_removing_a_stop_disables_the_connector(): void

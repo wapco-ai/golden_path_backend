@@ -24,12 +24,15 @@ class ConnectorRequest extends FormRequest
             'info.operational.gender_access.*' => 'required|in:male,female,both,family',
             'stops' => 'required|array|min:2|max:32',
             'stops.*.floor' => 'required|integer|distinct|exists:routing_floors,floor',
-            'stops.*.access_id' => 'nullable|integer|distinct',
+            'stops.*.access_id' => 'required|integer|min:1|distinct',
             'stops.*.area_id' => 'nullable|integer',
-            'stops.*.lat' => 'nullable|numeric|between:-90,90',
-            'stops.*.lon' => 'nullable|numeric|between:-180,180',
             'stops.*.travel_seconds' => 'nullable|numeric|gt:0|max:3600',
             'stops.*.reverse_seconds' => 'nullable|numeric|gt:0|max:3600',
         ];
+    }
+
+    public function messages(): array
+    {
+        return ['stops.*.access_id.required' => 'برای هر توقف، یک نقطهٔ دسترسی موجود در همان طبقه انتخاب کنید.'];
     }
 }
