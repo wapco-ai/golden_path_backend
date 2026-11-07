@@ -9,6 +9,7 @@ use Illuminate\Foundation\Queue\Queueable as FoundationQueueable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
+use RuntimeException;
 use Throwable;
 
 class RebuildDoorGraphJob implements ShouldQueue, ShouldBeUnique
@@ -40,7 +41,7 @@ class RebuildDoorGraphJob implements ShouldQueue, ShouldBeUnique
             // برای عملیات سنگین PostGIS
             DB::statement("SET LOCAL statement_timeout = '15min'");
 
-            DB::select(
+            $row = DB::selectOne(
                 "SELECT public.fn_rebuild_graph_for_door(
                     :door_id,
                     false,
@@ -51,6 +52,8 @@ class RebuildDoorGraphJob implements ShouldQueue, ShouldBeUnique
                     'door_id' => $this->doorId,
                 ]
             );
+
+            $this->validateSingleSidedStop($row->result ?? null);
         });
 
         $this->setGraphStatus('ready');
@@ -59,6 +62,41 @@ class RebuildDoorGraphJob implements ShouldQueue, ShouldBeUnique
     public function failed(Throwable $e): void
     {
         $this->setGraphStatus('failed', $e->getMessage());
+    }
+
+    private function validateSingleSidedStop(?string $result): bool
+    {
+        // A landing can join the walkable graph without a same-floor door transition.
+        $stop = DB::selectOne(
+            'SELECT EXISTS (
+                SELECT 1
+                FROM public.routing_edges_static e
+                JOIN public.routing_nodes peer ON peer.id = CASE WHEN e.src = n.node_id THEN e.dst ELSE e.src END
+                WHERE n.node_id IN (e.src, e.dst)
+                  AND e.floor = n.floor AND peer.floor = n.floor AND peer.area_id = n.area_id
+                  AND peer.id <> n.node_id AND e.base_cost > 0
+                  AND e.geom IS NOT NULL AND NOT ST_IsEmpty(e.geom)
+            ) AS connected
+            FROM public.routing_connector_stops s
+            LEFT JOIN public.routing_connector_nodes n ON n.id = s.id
+            LEFT JOIN public.routing_nodes rn ON rn.id = n.node_id
+            LEFT JOIN public.door_access_points dap ON dap.id = rn.ref_id
+            WHERE s.door_id = ? AND (dap.from_area IS NULL OR dap.to_area IS NULL)',
+            [$this->doorId]
+        );
+
+        if ($stop === null) {
+            return false;
+        }
+
+        // Some graph builders report ok=false solely because there is no door transition.
+        $summary = json_decode($result ?? '', true);
+        if (!$stop->connected || ($summary['inserted_nodes'] ?? 0) < 1
+            || ($summary['areas_rebuilt_ok'] ?? 0) < 1 || ($summary['areas_rebuilt_failed'] ?? null) !== 0) {
+            throw new RuntimeException('اتصال گره توقف به گراف همان طبقه کامل نشد. ' . $result);
+        }
+
+        return true;
     }
 
     private function setGraphStatus(string $status, ?string $error = null): void
