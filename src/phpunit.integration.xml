@@ -9,6 +9,7 @@
             <directory>tests/Unit</directory>
         </testsuite>
         <testsuite name="Feature">
+            <file>tests/Feature/AdminPasswordLockPostgresTest.php</file>
             <file>tests/Feature/MultiFloorConnectorTest.php</file>
             <file>tests/Feature/RouteAlternativeDiversityTest.php</file>
             <file>tests/Feature/PublicPlaceFloorTest.php</file>

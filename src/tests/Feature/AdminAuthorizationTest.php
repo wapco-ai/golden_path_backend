@@ -28,6 +28,7 @@ class AdminAuthorizationTest extends TestCase
             $t->string('email')->nullable(); $t->boolean('is_admin')->default(true);
             $t->boolean('is_active')->default(true); $t->string('status')->default('active');
             $t->string('password')->nullable();
+            $t->string('avatar_url')->nullable();
             $t->integer('failed_login_attempts')->default(0);
             $t->timestamp('last_login_at')->nullable(); $t->string('last_login_ip')->nullable();
             $t->timestamp('locked_until')->nullable(); $t->timestamps();
@@ -77,9 +78,236 @@ class AdminAuthorizationTest extends TestCase
         Storage::fake('public');
     }
 
+    private function passwordFixture(bool $withAdminAuth = true): array
+    {
+        $old = 'fixture-old-password';
+        $hash = \Illuminate\Support\Facades\Hash::make($old);
+        DB::table('users')->where('id', 1)->update(['password' => $hash]);
+        if ($withAdminAuth) {
+            DB::table('admin_auth')->insert(['user_id' => 1, 'password_hash' => $hash,
+                'mfa_enabled' => true, 'mfa_secret' => 'fixture-mfa', 'created_at' => now(), 'updated_at' => now()]);
+        }
+        return $this->postJson('/api/v1/admin/auth/login', ['usernameOrEmail' => 'test1', 'password' => $old])->assertOk()->json();
+    }
+
+    public function test_password_change_success_revokes_refresh_and_keeps_existing_access_until_expiry(): void
+    {
+        $login = $this->passwordFixture();
+        $headers = ['Authorization' => 'Bearer '.$login['accessToken']];
+        $response = $this->postJson('/api/v1/admin/auth/change-password', [
+            'current_password' => 'fixture-old-password', 'password' => 'fixture-new-password',
+            'password_confirmation' => 'fixture-new-password',
+        ], $headers)->assertOk()->assertExactJson(['message' => 'PASSWORD_CHANGED']);
+        $auth = DB::table('admin_auth')->where('user_id', 1)->first();
+        $this->assertTrue(\Illuminate\Support\Facades\Hash::check('fixture-new-password', $auth->password_hash));
+        $this->assertSame($auth->password_hash, DB::table('users')->where('id', 1)->value('password'));
+        $this->assertNotNull($auth->last_password_change_at);
+        $this->assertTrue((bool) $auth->mfa_enabled);
+        $this->assertSame('fixture-mfa', $auth->mfa_secret);
+        $this->assertDatabaseHas('admin_user_roles', ['user_id' => 1, 'role_id' => 1]);
+        $this->assertDatabaseHas('users', ['id' => 1, 'status' => 'active', 'is_active' => true]);
+        $this->postJson('/api/v1/admin/auth/refresh', ['refreshToken' => $login['refreshToken']])->assertUnauthorized();
+        $this->getJson('/api/v1/admin/auth/me', $headers)->assertOk();
+        $this->postJson('/api/v1/admin/auth/login', ['usernameOrEmail' => 'test1', 'password' => 'fixture-old-password'])->assertUnauthorized();
+        $this->postJson('/api/v1/admin/auth/login', ['usernameOrEmail' => 'test1', 'password' => 'fixture-new-password'])->assertOk();
+    }
+
+    public function test_password_change_rejects_invalid_requests_and_other_account_target(): void
+    {
+        $login = $this->passwordFixture();
+        $headers = ['Authorization' => 'Bearer '.$login['accessToken']];
+        $hash = DB::table('admin_auth')->where('user_id', 1)->value('password_hash');
+        $valid = ['current_password' => 'fixture-old-password', 'password' => 'fixture-new-password', 'password_confirmation' => 'fixture-new-password'];
+        $this->postJson('/api/v1/admin/auth/change-password', $valid)->assertUnauthorized();
+        $this->postJson('/api/v1/admin/auth/change-password', array_merge($valid, ['current_password' => 'wrong-password']), $headers)->assertUnprocessable()->assertJsonValidationErrors('current_password');
+        $this->postJson('/api/v1/admin/auth/change-password', array_merge($valid, ['password_confirmation' => 'mismatch']), $headers)->assertUnprocessable()->assertJsonValidationErrors('password');
+        $this->postJson('/api/v1/admin/auth/change-password', array_merge($valid, ['user_id' => 2]), $headers)->assertUnprocessable()->assertJsonValidationErrors('user_id');
+        $this->assertSame($hash, DB::table('admin_auth')->where('user_id', 1)->value('password_hash'));
+        $this->assertSame($hash, DB::table('users')->where('id', 1)->value('password'));
+        $this->assertNull(DB::table('users')->where('id', 2)->value('password'));
+        $this->assertNull(DB::table('admin_refresh_tokens')->where('token', $login['refreshToken'])->value('revoked_at'));
+    }
+
+    public function test_password_change_uses_login_fallback_and_primary_takes_precedence(): void
+    {
+        $login = $this->passwordFixture(false);
+        $headers = ['Authorization' => 'Bearer '.$login['accessToken']];
+        $valid = ['current_password' => 'fixture-old-password', 'password' => 'fixture-new-password', 'password_confirmation' => 'fixture-new-password'];
+        $this->postJson('/api/v1/admin/auth/change-password', $valid, $headers)->assertOk();
+        $this->assertTrue(\Illuminate\Support\Facades\Hash::check('fixture-new-password', DB::table('admin_auth')->where('user_id', 1)->value('password_hash')));
+        DB::table('users')->where('id', 1)->update(['password' => \Illuminate\Support\Facades\Hash::make('fallback-only')]);
+        $this->postJson('/api/v1/admin/auth/change-password', array_merge($valid, ['current_password' => 'fallback-only']), $headers)->assertUnprocessable();
+    }
+
+    public function test_password_change_rolls_back_all_writes_if_storage_fails(): void
+    {
+        $login = $this->passwordFixture();
+        $headers = ['Authorization' => 'Bearer '.$login['accessToken']];
+        $hash = DB::table('admin_auth')->where('user_id', 1)->value('password_hash');
+        DB::statement("CREATE TRIGGER reject_password_update BEFORE UPDATE OF password ON users BEGIN SELECT RAISE(FAIL, 'fixture failure'); END");
+        $response = $this->postJson('/api/v1/admin/auth/change-password', [
+            'current_password' => 'fixture-old-password', 'password' => 'fixture-new-password', 'password_confirmation' => 'fixture-new-password',
+        ], $headers)->assertStatus(500)->assertJsonPath('error', 'PASSWORD_CHANGE_FAILED');
+        $this->assertStringNotContainsString('fixture-new-password', $response->getContent());
+        $this->assertStringNotContainsString($hash, $response->getContent());
+        $this->assertSame($hash, DB::table('admin_auth')->where('user_id', 1)->value('password_hash'));
+        $this->assertSame($hash, DB::table('users')->where('id', 1)->value('password'));
+        $this->assertNull(DB::table('admin_auth')->where('user_id', 1)->value('last_password_change_at'));
+        $this->assertNull(DB::table('admin_refresh_tokens')->where('token', $login['refreshToken'])->value('revoked_at'));
+    }
+
+    public function test_password_verification_limit_is_shared_by_account_across_tokens_and_ips(): void
+    {
+        $login = $this->passwordFixture();
+        $headers = ['Authorization' => 'Bearer '.$login['accessToken']];
+        $otherToken = ['Authorization' => 'Bearer '.app(JwtService::class)->createAccessToken([
+            'sub' => 1, 'role' => 'ADMIN', 'jti' => 'another-session',
+        ])];
+        $valid = ['current_password' => 'fixture-old-password', 'password' => 'fixture-new-password',
+            'password_confirmation' => 'fixture-new-password'];
+        $hash = DB::table('admin_auth')->where('user_id', 1)->value('password_hash');
+
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            $this->withServerVariables(['REMOTE_ADDR' => '198.51.100.'.($attempt + 1)])
+                ->postJson('/api/v1/admin/auth/change-password',
+                    array_merge($valid, ['current_password' => 'incorrect-password']),
+                    $attempt % 2 ? $headers : $otherToken)
+                ->assertUnprocessable()->assertJsonValidationErrors('current_password');
+        }
+        $blocked = $this->postJson('/api/v1/admin/auth/change-password', $valid, $headers)
+            ->assertStatus(429)->assertJsonPath('error', 'PASSWORD_CHANGE_RATE_LIMITED');
+        $this->assertGreaterThan(0, (int) $blocked->headers->get('Retry-After'));
+        $this->assertSame($hash, DB::table('users')->where('id', 1)->value('password'));
+        $this->assertSame($hash, DB::table('admin_auth')->where('user_id', 1)->value('password_hash'));
+        $this->assertNull(DB::table('admin_refresh_tokens')->where('token', $login['refreshToken'])->value('revoked_at'));
+
+        // Another account using the same IP has its own budget.
+        DB::table('users')->where('id', 2)->update(['password' => $hash]);
+        $this->postJson('/api/v1/admin/auth/change-password', $valid, $this->token(2))->assertOk();
+
+        $this->travel(61)->seconds();
+        $this->postJson('/api/v1/admin/auth/change-password', $valid, $otherToken)->assertOk();
+        $this->assertTrue(\Illuminate\Support\Facades\Hash::check('fixture-new-password',
+            DB::table('admin_auth')->where('user_id', 1)->value('password_hash')));
+    }
+
     private function token(int $id): array
     {
         return ['Authorization' => 'Bearer '.app(JwtService::class)->createAccessToken(['sub'=>$id, 'role'=>'ADMIN'])];
+    }
+
+    private function avatarFile(): UploadedFile
+    {
+        return new UploadedFile(__DIR__.'/../Fixtures/cultural-media/tiny.jpg', 'avatar.jpg', 'image/jpeg', null, true);
+    }
+
+    private function avatarPath(string $url): string
+    {
+        parse_str(parse_url($url, PHP_URL_QUERY), $query);
+        return $query['path'];
+    }
+
+    public function test_admin_avatar_is_saved_served_replaced_and_deleted_for_own_account(): void
+    {
+        // Map-only administrators can manage their own avatar without account-management grants.
+        $headers = $this->token(2) + ['Accept' => 'application/json'];
+        $first = $this->post('/api/v1/admin/auth/avatar', ['file' => $this->avatarFile()], $headers)->assertOk()->json('url');
+        $path = $this->avatarPath($first);
+        $this->assertStringStartsWith('uploads/admin_avatars/2/', $path);
+        $this->assertTrue(Storage::disk('public')->exists($path));
+        $this->getJson('/api/v1/admin/auth/me', $headers)->assertOk()->assertJsonPath('avatarUrl', $first);
+        $this->assertNull(DB::table('users')->where('id', 1)->value('avatar_url'));
+        $image = $this->get($first)->assertOk()->assertHeader('Content-Type', 'image/jpeg');
+        $this->assertStringStartsWith('inline;', $image->headers->get('Content-Disposition'));
+        $this->assertSame(file_get_contents(__DIR__.'/../Fixtures/cultural-media/tiny.jpg'), $image->streamedContent());
+        $download = $this->get(str_replace('&inline=1', '', $first))->assertOk();
+        $this->assertStringStartsWith('attachment;', $download->headers->get('Content-Disposition'));
+        $this->deleteJson('/api/v1/files?'.http_build_query(['path' => $path]), [], $this->token(1))->assertStatus(400);
+        $this->assertTrue(Storage::disk('public')->exists($path));
+
+        $second = $this->post('/api/v1/admin/auth/avatar', ['file' => $this->avatarFile()], $headers)->assertOk()->json('url');
+        $this->assertNotSame($first, $second);
+        $this->assertFalse(Storage::disk('public')->exists($path));
+        $this->assertTrue(Storage::disk('public')->exists($this->avatarPath($second)));
+        $this->post('/api/v1/admin/auth/avatar', ['file' => $this->avatarFile(), 'user_id' => 1], $headers)
+            ->assertUnprocessable()->assertJsonValidationErrors('user_id');
+        $this->deleteJson('/api/v1/admin/auth/avatar', ['id' => 1], $headers)->assertUnprocessable();
+        $this->assertSame($second, DB::table('users')->where('id', 2)->value('avatar_url'));
+
+        $this->deleteJson('/api/v1/admin/auth/avatar', [], $headers)->assertOk();
+        $this->assertFalse(Storage::disk('public')->exists($this->avatarPath($second)));
+        $this->getJson('/api/v1/admin/auth/me', $headers)->assertOk()->assertJsonPath('avatarUrl', null);
+        $this->deleteJson('/api/v1/admin/auth/avatar', [], $headers)->assertOk();
+    }
+
+    public function test_admin_avatar_is_returned_after_a_new_login(): void
+    {
+        $url = $this->post('/api/v1/admin/auth/avatar', ['file' => $this->avatarFile()],
+            $this->token(1) + ['Accept' => 'application/json'])->assertOk()->json('url');
+        $login = $this->passwordFixture();
+        $this->assertSame($url, $login['user']['avatarUrl']);
+        $this->getJson('/api/v1/admin/auth/me', ['Authorization' => 'Bearer '.$login['accessToken']])
+            ->assertOk()->assertJsonPath('avatarUrl', $url);
+    }
+
+    public function test_file_download_never_renders_active_uploads_inline(): void
+    {
+        foreach ([
+            'page.html' => '<!doctype html><script>alert(document.domain)</script>',
+            'drawing.svg' => '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+            'unknown.txt' => 'plain text fixture',
+        ] as $name => $contents) {
+            $path = 'uploads/contents/1/files/'.$name;
+            Storage::disk('public')->put($path, $contents);
+            $response = $this->get('/api/v1/files?'.http_build_query(['path' => $path, 'inline' => 1]))
+                ->assertOk()->assertHeader('X-Content-Type-Options', 'nosniff');
+            $this->assertStringStartsWith('attachment;', $response->headers->get('Content-Disposition'));
+            $this->assertSame($contents, $response->streamedContent());
+        }
+    }
+
+    public function test_admin_avatar_rejects_missing_auth_invalid_images_and_oversized_files(): void
+    {
+        $this->post('/api/v1/admin/auth/avatar', ['file' => $this->avatarFile()], ['Accept' => 'application/json'])->assertUnauthorized();
+        $this->deleteJson('/api/v1/admin/auth/avatar')->assertUnauthorized();
+        DB::table('users')->where('id', 3)->update(['is_admin' => false]);
+        $this->post('/api/v1/admin/auth/avatar', ['file' => $this->avatarFile()],
+            $this->token(3) + ['Accept' => 'application/json'])->assertUnauthorized();
+        foreach ([
+            UploadedFile::fake()->create('fake.png', 1, 'text/plain'),
+            UploadedFile::fake()->createWithContent('avatar.svg', '<svg xmlns="http://www.w3.org/2000/svg"></svg>'),
+            UploadedFile::fake()->create('large.jpg', 5121, 'image/jpeg'),
+        ] as $file) {
+            $this->post('/api/v1/admin/auth/avatar', ['file' => $file], $this->token(1) + ['Accept' => 'application/json'])
+                ->assertUnprocessable()->assertJsonValidationErrors('file');
+        }
+        $this->assertNull(DB::table('users')->where('id', 1)->value('avatar_url'));
+        $this->assertSame([], Storage::disk('public')->allFiles());
+    }
+
+    public function test_failed_avatar_writes_keep_the_previous_image_and_remove_uncommitted_files(): void
+    {
+        $headers = $this->token(1) + ['Accept' => 'application/json'];
+        $url = $this->post('/api/v1/admin/auth/avatar', ['file' => $this->avatarFile()], $headers)->assertOk()->json('url');
+        DB::statement("CREATE TRIGGER reject_avatar_update BEFORE UPDATE OF avatar_url ON users BEGIN SELECT RAISE(FAIL, 'fixture failure'); END");
+        $this->post('/api/v1/admin/auth/avatar', ['file' => $this->avatarFile()], $headers)
+            ->assertStatus(500)->assertJsonPath('error', 'AVATAR_UPLOAD_FAILED');
+        $this->deleteJson('/api/v1/admin/auth/avatar', [], $headers)
+            ->assertStatus(500)->assertJsonPath('error', 'AVATAR_DELETE_FAILED');
+        $this->assertSame($url, DB::table('users')->where('id', 1)->value('avatar_url'));
+        $this->assertSame([$this->avatarPath($url)], Storage::disk('public')->allFiles());
+    }
+
+    public function test_avatar_cleanup_cannot_delete_another_accounts_file_or_follow_parent_paths(): void
+    {
+        $otherPath = 'uploads/admin_avatars/2/other.jpg';
+        Storage::disk('public')->put($otherPath, 'other account fixture');
+        foreach ([$otherPath, 'uploads/admin_avatars/1/../2/other.jpg'] as $oldPath) {
+            DB::table('users')->where('id', 1)->update(['avatar_url' => '/api/v1/files?'.http_build_query(['path' => $oldPath])]);
+            $this->post('/api/v1/admin/auth/avatar', ['file' => $this->avatarFile()],
+                $this->token(1) + ['Accept' => 'application/json'])->assertOk();
+            $this->assertTrue(Storage::disk('public')->exists($otherPath));
+        }
     }
 
     public function test_admin_routes_require_their_explicit_section_even_for_dashboard_admin(): void

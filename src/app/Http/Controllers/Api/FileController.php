@@ -206,7 +206,7 @@ class FileController extends Controller implements HasMiddleware
         ]);
 
         $disk = Storage::disk('public');
-        $path = $this->normalizePath($data['path']);
+        $path = $this->normalizePath($data['path'], allowAdminAvatar: true);
 
         if (!$disk->exists($path)) {
             abort(404, 'File not found');
@@ -215,11 +215,15 @@ class FileController extends Controller implements HasMiddleware
         $downloadName = $data['as'] ?? basename($path);
         $downloadName = $this->sanitizeDownloadName($downloadName);
 
-        $headers = [];
         $mime = $disk->mimeType($path);
-        if ($mime) $headers['Content-Type'] = $mime;
+        $headers = [
+            'Content-Type' => $mime ?: 'application/octet-stream',
+            'X-Content-Type-Options' => 'nosniff',
+        ];
 
-        $inline = (bool)($data['inline'] ?? false);
+        // Generic uploads may contain HTML/SVG; only passive raster images may render on this origin.
+        $inline = (bool)($data['inline'] ?? false)
+            && in_array($mime, ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], true);
         $headers['Content-Disposition'] =
             ($inline ? 'inline' : 'attachment') . '; filename="' . $downloadName . '"';
 
@@ -230,7 +234,7 @@ class FileController extends Controller implements HasMiddleware
             }
             fpassthru($stream);
             if (is_resource($stream)) fclose($stream);
-        }, $downloadName, $headers);
+        }, $downloadName, $headers, $inline ? 'inline' : 'attachment');
     }
 
     /**
@@ -428,7 +432,7 @@ class FileController extends Controller implements HasMiddleware
         return ['id' => $id, 'attached' => true];
     }
 
-    private function normalizePath(string $path): string
+    private function normalizePath(string $path, bool $allowAdminAvatar = false): string
     {
         $path = trim($path);
         // اگر URL کامل بود، فقط قسمت بعد از /storage/ را بردار
@@ -472,6 +476,10 @@ class FileController extends Controller implements HasMiddleware
 
         // (اختیاری) whitelist اینجا هم می‌تونی enforce کنی
         $allowedTables = ['poi_points', 'contents', 'areas', 'doors', 'categories', 'guidance_points'];
+        // Avatar writes remain exclusively on the authenticated self-service route.
+        if ($allowAdminAvatar) {
+            $allowedTables[] = 'admin_avatars';
+        }
         if (!in_array(strtolower($entityTable), $allowedTables, true)) {
             abort(400, 'Invalid entity_table scope');
         }
