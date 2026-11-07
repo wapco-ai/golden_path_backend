@@ -26,9 +26,8 @@ class ConnectorController extends Controller
     {
         $data = $request->validate([
             'floor' => 'required|integer|exists:routing_floors,floor',
-            'access_id' => 'nullable|integer', 'lat' => 'nullable|numeric|between:-90,90',
-            'lon' => 'nullable|numeric|between:-180,180',
-        ]);
+            'access_id' => 'required|integer|min:1',
+        ], ['access_id.required' => 'یک نقطهٔ دسترسی موجود در این طبقه انتخاب کنید.']);
         $areas = $this->connectors->candidates($data);
         return response()->json(['areas' => $areas, 'area_id' => count($areas) === 1 ? $areas[0]->id : null]);
     }

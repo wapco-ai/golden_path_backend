@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use App\Http\Controllers\Api\DoorCrudController;
-use App\Jobs\RebuildDoorGraphJob;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -16,27 +15,20 @@ class ConnectorService
 
     public function candidates(array $point): array
     {
-        $floor = (int) $point['floor'];
-        if (!empty($point['access_id'])) {
-            $dap = DB::table('door_access_points')->where('id', $point['access_id'])->first();
-            if (!$dap || (int) $dap->floor !== $floor || $dap->needs_review) {
-                throw ValidationException::withMessages(['access_id' => 'نقطهٔ دسترسی معتبر در این طبقه انتخاب کنید.']);
-            }
-            return DB::select("SELECT a.id, a.floor, COALESCE(t.txt, 'محدوده ' || a.id) AS name
-                FROM areas a LEFT JOIN LATERAL (SELECT txt FROM i18n_texts
-                  WHERE entity_table='areas' AND entity_id=a.id AND field='name' AND lang='fa' LIMIT 1) t ON true
-                WHERE a.floor=? AND a.id IN (?,?) AND fn_area_routing_role(a.area_type,a.attrs)='routable'
-                ORDER BY a.id", [$floor, $dap->from_area, $dap->to_area]);
+        $dap = DB::table('door_access_points')->find($point['access_id']);
+        return $this->candidateAreas($dap, (int) $point['floor'], 'access_id');
+    }
+
+    private function candidateAreas(?object $dap, int $floor, string $errorField): array
+    {
+        if (!$dap || (int) $dap->floor !== $floor || $dap->needs_review) {
+            throw ValidationException::withMessages([$errorField => 'نقطهٔ دسترسی معتبر در این طبقه انتخاب کنید.']);
         }
-        if (!isset($point['lat'], $point['lon'])) {
-            throw ValidationException::withMessages(['point' => 'نقطهٔ دسترسی را روی نقشه مشخص کنید.']);
-        }
-        return DB::select("WITH p AS (SELECT ST_Transform(ST_SetSRID(ST_MakePoint(?::float8,?::float8),4326),32640) AS geom)
-            SELECT a.id, a.floor, COALESCE(t.txt, 'محدوده ' || a.id) AS name
-            FROM areas a CROSS JOIN p LEFT JOIN LATERAL (SELECT txt FROM i18n_texts
+        return DB::select("SELECT a.id, a.floor, COALESCE(t.txt, 'محدوده ' || a.id) AS name
+            FROM areas a LEFT JOIN LATERAL (SELECT txt FROM i18n_texts
               WHERE entity_table='areas' AND entity_id=a.id AND field='name' AND lang='fa' LIMIT 1) t ON true
-            WHERE a.floor=? AND fn_area_routing_role(a.area_type,a.attrs)='routable'
-              AND ST_DWithin(a.geom,p.geom,0.75) ORDER BY a.id", [$point['lon'], $point['lat'], $floor]);
+            WHERE a.floor=? AND a.id IN (?,?) AND fn_area_routing_role(a.area_type,a.attrs)='routable'
+            ORDER BY a.id", [$floor, $dap->from_area, $dap->to_area]);
     }
 
     public function show(int $id): array
@@ -93,38 +85,22 @@ class ConnectorService
             }
             $stops = [];
             foreach ($data['stops'] as $position => $stop) {
-                $candidates = $this->candidates($stop);
+                $dap = DB::table('door_access_points')->where('id', $stop['access_id'])->lockForUpdate()->first();
+                $candidates = $this->candidateAreas($dap, (int) $stop['floor'], "stops.$position.access_id");
                 $areaIds = array_map(fn ($area) => (int) $area->id, $candidates);
                 $area = isset($stop['area_id']) ? (int) $stop['area_id'] : (count($areaIds) === 1 ? $areaIds[0] : null);
                 if (!$area || !in_array($area, $areaIds, true)) {
                     throw ValidationException::withMessages(["stops.$position.area_id" => count($areaIds) ? 'فضای دسترسی این توقف مبهم است؛ یکی از فضاهای نمایش‌داده‌شده را انتخاب کنید.' : 'فضای قابل‌تردد کنار این نقطه یافت نشد.']);
                 }
-                if (!empty($stop['access_id'])) {
-                    $dap = DB::table('door_access_points')->where('id', $stop['access_id'])->lockForUpdate()->first();
-                    $doorId = (int) $dap->door_id;
-                    DB::table('doors')->where('id', $doorId)->lockForUpdate()->first();
-                    $other = DB::table('routing_connector_stops')->where('door_id', $doorId)->where('connector_id', '<>', $id)->exists();
-                    if ($other) throw ValidationException::withMessages(["stops.$position.access_id" => 'این نقطه عضو اتصال دیگری است.']);
-                    $accessId = (int) $dap->id;
-                } else {
-                    // The clicked point is the DAP geometry source. doors.geom is display only.
-                    $row = DB::selectOne("WITH p AS (
-                        SELECT ST_ClosestPoint(a.geom,ST_Transform(ST_SetSRID(ST_MakePoint(?::float8,?::float8),4326),32640)) AS geom
-                        FROM areas a WHERE a.id=? AND a.floor=?
-                      ), d AS (
-                        INSERT INTO doors(geom,from_area,to_area,floor,is_open,attrs)
-                        SELECT ST_MakeLine(ST_Translate(p.geom,-0.10,0),ST_Translate(p.geom,0.10,0)),?,NULL,?,false,
-                          '{\"connector_managed\":true}'::jsonb FROM p RETURNING id
-                      ) INSERT INTO door_access_points(door_id,geom,floor,from_area,to_area,confidence,build_method,needs_review)
-                        SELECT d.id,p.geom,?,?,NULL,1,'connector_stop',false FROM d CROSS JOIN p RETURNING id,door_id",
-                        [$stop['lon'], $stop['lat'], $area, $stop['floor'], $area, $stop['floor'], $stop['floor'], $area]);
-                    $doorId = (int) $row->door_id; $accessId = (int) $row->id;
-                }
+                $doorId = (int) $dap->door_id;
+                DB::table('doors')->where('id', $doorId)->lockForUpdate()->first();
+                $other = DB::table('routing_connector_stops')->where('door_id', $doorId)->where('connector_id', '<>', $id)->exists();
+                if ($other) throw ValidationException::withMessages(["stops.$position.access_id" => 'این نقطه عضو اتصال دیگری است.']);
                 if (in_array($doorId, array_column($stops, 'door_id'), true)) {
                     throw ValidationException::withMessages(["stops.$position.access_id" => 'نقطهٔ تکراری در توقف‌ها مجاز نیست.']);
                 }
                 $stops[] = [
-                    'connector_id' => $id, 'door_id' => $doorId, 'access_id' => $accessId,
+                    'connector_id' => $id, 'door_id' => $doorId, 'access_id' => (int) $dap->id,
                     'area_id' => $area, 'floor' => $stop['floor'], 'position' => $position,
                     'travel_seconds' => $stop['travel_seconds'] ?? ($data['kind'] === 'elevator' ? 8 : 30),
                     'reverse_seconds' => $stop['reverse_seconds'] ?? null,
@@ -134,8 +110,8 @@ class ConnectorService
             DB::table('routing_connector_stops')->insert($stops);
             $info = $data['info'];
             $info['operational']['place_function'] = $data['kind'];
-            // Vertical direction is independent of local threshold from_area/to_area.
-            $info['routing'] = ['bidirectional' => true];
+            // Vertical direction is independent of the existing door's same-floor direction.
+            unset($info['routing']);
             $controller = app(DoorCrudController::class);
             foreach ($stops as $stop) {
                 $controller->saveInfo(Request::create('/', 'PUT', $info), $stop['door_id'], true);

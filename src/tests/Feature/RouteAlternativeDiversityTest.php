@@ -221,14 +221,24 @@ class RouteAlternativeDiversityTest extends TestCase
         $this->withoutMiddleware([AdminAuth::class, \App\Http\Middleware\AdminSectionAccess::class]);
         $connectorIds = [];
         foreach (['elevator','elevator','stair'] as $i=>$kind) {
+            $stops = [];
+            foreach ([0, 1] as $floor) {
+                $access = DB::selectOne("WITH d AS (
+                    INSERT INTO doors(geom, from_area, floor)
+                    VALUES (ST_GeomFromText('LINESTRING(500050 4000059,500050 4000061)',32640), ?, ?)
+                    RETURNING id, from_area, floor
+                )
+                INSERT INTO door_access_points(door_id, geom, floor, from_area, needs_review)
+                SELECT id, ST_SetSRID(ST_MakePoint(500050,4000060),32640), floor, from_area, false FROM d RETURNING id",
+                    [$areas[$floor], $floor]);
+                $stops[] = ['floor' => $floor, 'access_id' => $access->id, 'area_id' => $areas[$floor], 'travel_seconds' => 8];
+            }
             $payload = ['kind'=>$kind,'direction'=>'both','wait_seconds'=>20+$i*5,
                 'info'=>['basic_info'=>['title'=>['fa'=>'گزینه '.($i+1)],'description'=>''],
                     'operational'=>['status'=>'active','place_function'=>$kind,
                         'transport_modes'=>$kind==='stair'?['walk']:['walk','wheelchair'],'gender_access'=>['both']],
                     'time_restrictions'=>[],'prayer_restrictions'=>[]],
-                'stops'=>array_map(fn($floor)=>$this->point(50,60)+[
-                    'floor'=>$floor,'area_id'=>$areas[$floor],'travel_seconds'=>8,
-                ],[0,1])];
+                'stops'=>$stops];
             $connectorIds[] = $this->postJson('/api/v1/admin/connectors',$payload)->assertCreated()->json('id');
         }
         $this->rebuild([0,1]);
