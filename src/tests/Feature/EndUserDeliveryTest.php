@@ -8,6 +8,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use Illuminate\Http\Request;
 use Tests\TestCase;
 
 class EndUserDeliveryTest extends TestCase
@@ -93,6 +94,19 @@ class EndUserDeliveryTest extends TestCase
         $this->withHeader('Authorization', 'Bearer invalid');
         $this->postJson('/api/v1/emergencies', $this->emergency())->assertUnauthorized();
         $this->assertDatabaseCount('support_feedbacks', 0);
+    }
+
+    public function test_legacy_routing_tolerates_expired_token_but_new_client_can_refresh(): void
+    {
+        $next = fn () => response()->json(['ok' => true]);
+        $middleware = app(\App\Http\Middleware\CaptureRouteHistory::class);
+        $old = Request::create('/api/v1/routing/route', 'POST', [], [], [], ['HTTP_AUTHORIZATION' => 'Bearer invalid']);
+        $this->assertSame(200, $middleware->handle($old, $next)->getStatusCode());
+        $new = Request::create('/api/v1/routing/route', 'POST', ['authStrict' => true], [], [], [
+            'HTTP_AUTHORIZATION' => 'Bearer invalid']);
+        $this->assertSame(401, $middleware->handle($new, $next)->getStatusCode());
+        $guest = Request::create('/api/v1/routing/route', 'POST', ['authStrict' => true]);
+        $this->assertSame(200, $middleware->handle($guest, $next)->getStatusCode());
     }
 
     public function test_stale_imprecise_and_out_of_range_locations_are_rejected(): void
