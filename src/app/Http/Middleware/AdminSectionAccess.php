@@ -28,6 +28,7 @@ class AdminSectionAccess
             'admin/comments' => ['مدیریت دیدگاه ها'],
             'admin/dashboard' => [AdminAccess::SUPER_TITLE, 'مدیریت گزارشات'],
             'admin/connectors' => ['مدیریت نقشه'],
+            'admin/same-floor-stairs' => ['مدیریت نقشه'],
             'admin/van' => ['مدیریت نقشه'],
             'admin/temp-block-areas' => ['مدیریت نقشه'],
             'admin/guidance-points' => [AdminAccess::GUIDANCE_TITLE],

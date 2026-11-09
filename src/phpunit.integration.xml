@@ -27,6 +27,10 @@
             <file>tests/Feature/RazaviAuthPostgresTest.php</file>
             <file>tests/Feature/GuidanceRoleMigrationTest.php</file>
         </testsuite>
+        <testsuite name="SameFloorStairs">
+            <file>tests/Feature/SameFloorStairTest.php</file>
+            <file>tests/Feature/SameFloorStairRouteOutputTest.php</file>
+        </testsuite>
     </testsuites>
     <source>
         <include>

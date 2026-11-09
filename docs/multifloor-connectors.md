@@ -10,6 +10,8 @@ Elevators permit direct journeys between all accessible served stops, with one w
 
 The admin API writes the group and all stops atomically and uses an optimistic version to prevent stale edits. Each stop requires the ID of an existing door access point on its own floor. The selected walkable area must be one of the areas served by that point. Register a missing entrance through the door workflow before adding it as a stop. Standard doors retain their existing API; connected doors are edited through the shared connector endpoint.
 
+Same-floor stair edits use `PUT /api/v1/admin/same-floor-stairs/{id}` and validate both landings and their geometry. To deactivate a saved stair even if a landing is missing or invalid, send `PATCH /api/v1/admin/same-floor-stairs/{id}/deactivate` with the current `version`. This changes only the status and returns HTTP 409 for a stale version. An unset `travel_seconds` is returned as `null` so that saving the record again preserves the distance-based routing time.
+
 Route responses preserve ordered floor segments and explicit transfers. Transfer geometry is null (in particular, a lift with identical XY must not disappear). Per-floor geometries come only from routing edges. The client must not run the floor-unaware local fallback after a multi-floor routing failure.
 
 Verification: the `multifloor-integration` CI job creates a disposable `golden_path_connector_test` database, imports the baseline and versioned changes, and tests real HTTP validation, transactional rollback and pgRouting with three floors. It never uses a development or production database. Frontend tests/build and browser form checks are in the linked frontend PR.
