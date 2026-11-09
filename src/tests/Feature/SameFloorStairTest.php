@@ -143,6 +143,51 @@ class SameFloorStairTest extends TestCase
         $this->route()->assertNotFound()->assertJsonPath('status', 'NO_PATH');
     }
 
+    public function test_unset_stair_time_stays_unset_when_the_saved_stops_are_resubmitted(): void
+    {
+        $this->withoutMiddleware([AdminAuth::class, AdminSectionAccess::class]);
+        $payload = $this->payload();
+        unset($payload['stops'][0]['travel_seconds'], $payload['stops'][0]['reverse_seconds']);
+        $saved = $this->postJson(self::API, $payload)->assertCreated()
+            ->assertJsonPath('data.stops.0.travel_seconds', null)->json('data');
+
+        $record = $this->getJson(self::API.'?floor=-1')->assertOk()
+            ->assertJsonPath('data.0.stops.0.travel_seconds', null)->json('data.0');
+        $payload['version'] = $record['version'];
+        $payload['stops'] = $record['stops'];
+        $this->putJson(self::API.'/'.$saved['id'], $payload)->assertOk()
+            ->assertJsonPath('data.stops.0.travel_seconds', null);
+        $this->assertNull(DB::table('same_floor_stairs')->where('id', $saved['id'])->value('travel_seconds'));
+
+        $route = $this->route()->assertOk();
+        $stairStep = collect($route->json('steps'))->firstWhere('type', 'stepUseStairs');
+        $this->assertEqualsWithDelta(5 / 1.2, (float) $stairStep['duration_s'], 0.001);
+    }
+
+    public function test_deactivation_only_requires_the_current_version_even_with_an_invalid_landing(): void
+    {
+        $this->patchJson(self::API.'/1/deactivate', ['version' => 1])->assertUnauthorized();
+        $this->withoutMiddleware([AdminAuth::class, AdminSectionAccess::class]);
+        $saved = $this->postJson(self::API, $this->payload())->assertCreated()->json('data');
+        $url = self::API.'/'.$saved['id'].'/deactivate';
+        $accessId = $this->stops[0]['access_id'];
+        DB::table('door_access_points')->where('id', $accessId)->update(['needs_review' => true]);
+
+        $this->patchJson($url, ['version' => $saved['version'] + 1])->assertConflict();
+        $this->patchJson($url, ['version' => $saved['version']])->assertOk()
+            ->assertJsonPath('data.is_active', false)
+            ->assertJsonPath('data.info.operational.status', 'inactive')
+            ->assertJsonPath('data.version', $saved['version'] + 1)
+            ->assertJsonPath('data.stops.0.access_id', $accessId);
+        $this->assertSame('inactive', DB::table('same_floor_stairs')->where('id', $saved['id'])
+            ->value(DB::raw("info #>> '{operational,status}'")));
+
+        DB::table('door_access_points')->where('id', $accessId)->delete();
+        $currentVersion = DB::table('same_floor_stairs')->where('id', $saved['id'])->value('version');
+        $this->patchJson($url, ['version' => $currentVersion])->assertOk()
+            ->assertJsonPath('data.is_active', false)->assertJsonPath('data.stops.0.access_id', null);
+    }
+
     public function test_candidate_areas_match_both_landings_and_the_validated_stair_geometry(): void
     {
         $query = [

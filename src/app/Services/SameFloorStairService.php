@@ -52,6 +52,34 @@ class SameFloorStairService
         return $records[0];
     }
 
+    private function lockStair(int $id, int $version): object
+    {
+        $stair = DB::table('same_floor_stairs')->where('id', $id)->lockForUpdate()->first();
+        abort_unless($stair, 404);
+        abort_if($version !== (int) $stair->version, 409, 'اطلاعات پله تغییر کرده است. فرم را دوباره باز کنید.');
+
+        return $stair;
+    }
+
+    public function deactivate(int $id, int $version): array
+    {
+        return DB::transaction(function () use ($id, $version) {
+            $stair = $this->lockStair($id, $version);
+            if ($stair->is_active) {
+                $info = json_decode($stair->info, true, flags: JSON_THROW_ON_ERROR);
+                $info['operational']['status'] = 'inactive';
+                DB::table('same_floor_stairs')->where('id', $id)->update([
+                    'is_active' => false,
+                    'info' => json_encode($info, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+                    'version' => $version + 1,
+                    'updated_at' => now(),
+                ]);
+            }
+
+            return $this->show($id);
+        }, 3);
+    }
+
     public function save(array $data, ?int $id = null): array
     {
         [$lower, $upper] = $data['stops'];
@@ -69,10 +97,7 @@ class SameFloorStairService
 
             $version = 1;
             if ($id !== null) {
-                $current = DB::table('same_floor_stairs')->where('id', $id)->lockForUpdate()->first();
-                abort_unless($current, 404);
-                abort_if((int) ($data['version'] ?? 0) !== (int) $current->version, 409,
-                    'اطلاعات پله تغییر کرده است. فرم را دوباره باز کنید.');
+                $current = $this->lockStair($id, (int) ($data['version'] ?? 0));
                 $version = (int) $current->version + 1;
             }
 
@@ -150,7 +175,7 @@ class SameFloorStairService
                     'access_id' => $accessId, 'door_id' => $point?->door_id,
                     'area_id' => $areaId, 'area_name' => $names->get($areaId, 'محدوده '.$areaId),
                     'lat' => $point?->lat, 'lon' => $point?->lon,
-                    'travel_seconds' => (float) ($stair->travel_seconds ?? 30),
+                    'travel_seconds' => $stair->travel_seconds !== null ? (float) $stair->travel_seconds : null,
                     'reverse_seconds' => $position === 0 && $stair->reverse_seconds !== null ? (float) $stair->reverse_seconds : null,
                 ];
             }

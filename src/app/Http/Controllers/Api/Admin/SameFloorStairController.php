@@ -41,4 +41,11 @@ class SameFloorStairController extends Controller
     {
         return response()->json(['data' => $this->stairs->save($request->validated(), $id)]);
     }
+
+    public function deactivate(Request $request, int $id): JsonResponse
+    {
+        $input = $request->validate(['version' => 'required|integer|min:1']);
+
+        return response()->json(['data' => $this->stairs->deactivate($id, (int) $input['version'])]);
+    }
 }

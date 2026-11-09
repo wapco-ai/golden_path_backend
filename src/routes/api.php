@@ -125,6 +125,7 @@ Route::prefix('v1')->group(function () {
         Route::get('admin/same-floor-stairs/candidates', [\App\Http\Controllers\Api\Admin\SameFloorStairController::class, 'candidates']);
         Route::post('admin/same-floor-stairs', [\App\Http\Controllers\Api\Admin\SameFloorStairController::class, 'store']);
         Route::put('admin/same-floor-stairs/{id}', [\App\Http\Controllers\Api\Admin\SameFloorStairController::class, 'update'])->whereNumber('id');
+        Route::patch('admin/same-floor-stairs/{id}/deactivate', [\App\Http\Controllers\Api\Admin\SameFloorStairController::class, 'deactivate'])->whereNumber('id');
         Route::post('doors/with-info', [DoorCrudController::class, 'storeWithInfo']);
         // Van CRUD
         Route::prefix('admin/van')->group(function () {
