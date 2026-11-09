@@ -1,0 +1,28 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Support\Facades\DB;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        $this->applySql('up');
+    }
+
+    public function down(): void
+    {
+        $this->applySql('down');
+    }
+
+    private function applySql(string $direction): void
+    {
+        $path = database_path('sql/20261109_150000_same_floor_stair_runtime_acl.'.$direction.'.sql');
+        $sql = file_get_contents($path);
+        if ($sql === false) {
+            throw new RuntimeException('Unable to read same-floor stair runtime ACL migration: '.$path);
+        }
+
+        DB::unprepared(preg_replace('/^(?:BEGIN|COMMIT);[ \t]*\r?$/m', '', $sql));
+    }
+};
