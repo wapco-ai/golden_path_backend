@@ -10,6 +10,7 @@ class SupportFeedback extends Model
 
     protected $fillable = [
         'user_id',
+        'request_id',
         'subject',
         'message',
         'status',

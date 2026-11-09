@@ -87,6 +87,10 @@ class FeedbackController extends Controller
      */
     public function store(Request $request)
     {
+        // The previous frontend used zero to mean "no rating".
+        if ($request->input('rating') === 0 || $request->input('rating') === '0') {
+            $request->merge(['rating' => null]);
+        }
         $data = $request->validate([
             'targetType' => 'required|string|in:poi,content,route',
             'targetId'   => 'required|integer|min:1',
@@ -96,33 +100,19 @@ class FeedbackController extends Controller
             'body'       => 'nullable|string|max:5000',
         ]);
 
-        $user = $request->user();
-        // موقتاً:
-        $userId = $user?->id ?? 1; // مثلا کاربر 1 را guest در نظر بگیر
-        // if (!$user) {
-        //     return response()->json([
-        //         'message' => 'Unauthorized',
-        //     ], 401);
-        // }
-
-        // یا می‌تونی اگر رکورد از قبل بود خطا بدهی؛ اینجا اجازه ویرایش می‌دهیم
-        $feedback = UserFeedback::updateOrCreate(
-            [
-                'user_id'     => $userId,
-                // user_id'     => $user->id,
-                'target_type' => $data['targetType'],
-                'target_id'   => $data['targetId'],
-                'lang'        => $data['lang'],
-            ],
-            [
-                'rating'   => $data['rating'] ?? null,
-                'title'    => $data['title'] ?? null,
-                'body'     => $data['body'] ?? null,
-                // هر بار که کاربر ادیت می‌کند، دوباره pending می‌شود
-                'status'   => 'pending',
-                'admin_note' => null,
-            ]
-        );
+        $userId = $request->user()?->id;
+        $identity = [
+            'user_id' => $userId, 'target_type' => $data['targetType'],
+            'target_id' => $data['targetId'], 'lang' => $data['lang'],
+        ];
+        $values = [
+            'rating' => $data['rating'] ?? null, 'title' => $data['title'] ?? null,
+            'body' => $data['body'] ?? null, 'status' => 'pending', 'admin_note' => null,
+        ];
+        // Guests create independent records; only an authenticated owner can update.
+        $feedback = $userId === null
+            ? UserFeedback::create(array_merge($identity, $values))
+            : UserFeedback::updateOrCreate($identity, $values);
 
         return response()->json([
             'id'      => $feedback->id,

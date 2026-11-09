@@ -14,7 +14,7 @@ class RouteHistoryContractTest extends TestCase
 
         $this->assertStringContainsString('CaptureRouteHistory::class', $provider);
         $this->assertStringContainsString('api/v1/routing/route', $middleware);
-        $this->assertStringContainsString('resolveOptionalUser', $middleware);
+        $this->assertStringContainsString('OptionalUserAuth::class', $middleware);
         $this->assertStringContainsString('return $next($request);', $middleware);
     }
 
