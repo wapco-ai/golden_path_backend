@@ -3,31 +3,37 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Services\AreaEndpointService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class AreaDoorsController extends Controller
 {
-    public function byPoint(Request $request)
+    public function byPoint(Request $request, AreaEndpointService $areaEndpoints)
     {
         // 1) اعتبارسنجی ورودی
         $data = $request->validate([
-            'lat'   => 'required|numeric',
-            'lon'   => 'required|numeric',
-            'floor' => 'required|integer',
-            'lang'  => 'nullable|string',
+            'area_id' => 'nullable|integer|min:1|prohibits:area_group_id',
+            'area_group_id' => 'nullable|string|max:100',
+            'lat'     => 'required_without_all:area_id,area_group_id|nullable|numeric',
+            'lon'     => 'required_without_all:area_id,area_group_id|nullable|numeric',
+            'floor'   => 'required_without_all:area_id,area_group_id|nullable|integer|min:-32768|max:32767',
+            'lang'    => 'nullable|string|in:fa,en,ar,ur',
         ]);
 
         $lang = $data['lang'] ?? 'fa';
 
-        // 2) صدا زدن فانکشن Postgres
-        $row = DB::selectOne("
+        $areaId = $data['area_id'] ?? null;
+        $areaGroupId = $data['area_group_id'] ?? null;
+        $rawPayload = $areaId !== null || $areaGroupId !== null
+            ? $areaEndpoints->doors($areaId, $lang, $data['floor'] ?? null, $areaGroupId)
+            : DB::selectOne("
             SELECT fn_area_doors_clockwise_json(
                 ST_Transform(
                     ST_SetSRID(ST_MakePoint(?, ?), 4326),
                     32640
                 ),
-                ?,
+                ?::smallint,
                 ?::lang_enum
             ) AS payload
         ", [
@@ -35,10 +41,9 @@ class AreaDoorsController extends Controller
             $data['lat'],
             $data['floor'],
             $lang,
-        ]);
+        ])?->payload;
 
         // اگر هیچ محدوده‌ای پیدا نشده یا درب ندارد
-        $rawPayload = $row?->payload;
         $payload = is_string($rawPayload) ? json_decode($rawPayload, true) : $rawPayload;
         if ($rawPayload === null || (is_array($payload) && array_key_exists('area', $payload) && $payload['area'] === null)) {
             return response()->json([
@@ -63,7 +68,7 @@ class AreaDoorsController extends Controller
             $areaM2 = floatval($area['areaM2']);
         }
 
-        if ($areaM2 !== null && $areaM2 < 100.0) {
+        if ($areaM2 !== null && $areaM2 < AreaEndpointService::MIN_PICKER_AREA_M2) {
             return response()->json([
                 'status'  => 'area_too_small',
                 'message' => 'مساحت محدودهٔ انتخابی کمتر از ۱۰۰ متر مربع است و برای این سرویس در نظر گرفته نمی‌شود.',
