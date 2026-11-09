@@ -38,18 +38,13 @@ class AreaDoorsController extends Controller
         ]);
 
         // اگر هیچ محدوده‌ای پیدا نشده یا درب ندارد
-        if (!$row || $row->payload === null) {
+        $rawPayload = $row?->payload;
+        $payload = is_string($rawPayload) ? json_decode($rawPayload, true) : $rawPayload;
+        if ($rawPayload === null || (is_array($payload) && array_key_exists('area', $payload) && $payload['area'] === null)) {
             return response()->json([
                 'status'  => 'not_found',
                 'message' => 'هیچ محدوده‌ای برای این مختصات یافت نشد یا دربی متصل ندارد.',
             ], 404);
-        }
-
-        // 3) نوع payload (ممکن است string یا آرایه/آبجکت باشد)
-        $payload = $row->payload;
-
-        if (is_string($payload)) {
-            $payload = json_decode($payload, true);
         }
 
         // اگر ساختار مورد انتظار نبود، یک خطای عمومی می‌دهیم

@@ -46,6 +46,7 @@ class RoutingController extends Controller
 
                 'lang'            => 'nullable|in:fa,en,ar,ur',
                 'maxAlternatives' => 'nullable|integer|min:0|max:3',
+                'allowNearbyDestination' => 'sometimes|boolean',
 
                 'origin.type'  => 'required|string|in:coordinate,poi,door,area,qrcode',
                 'origin.id'    => 'nullable|integer',
@@ -148,7 +149,7 @@ class RoutingController extends Controller
             $result = app(\App\Services\MultiFloorRoutingService::class)->route(
                 $gender, $mode, $originFloor, $destinationFloor,
                 ['lat' => $originLat, 'lon' => $originLon], ['lat' => $destLat, 'lon' => $destLon],
-                $lang, (int) $maxAlts
+                $lang, (int) $maxAlts, $request->boolean('allowNearbyDestination'), $d['name'] ?? null
             );
 
             // استخراج distance/duration اگر در خروجی موجود بود

@@ -6,13 +6,56 @@ use Illuminate\Support\Facades\DB;
 
 class MultiFloorRoutingService
 {
-    public function route(string $gender, string $mode, int $originFloor, int $destinationFloor, array $origin, array $destination, string $lang, int $alternatives): array
+    public function route(string $gender, string $mode, int $originFloor, int $destinationFloor, array $origin, array $destination, string $lang, int $alternatives, bool $allowNearbyDestination = false, ?string $destinationName = null): array
     {
-        return DB::transaction(function () use ($gender, $mode, $originFloor, $destinationFloor, $origin, $destination, $lang, $alternatives) {
-            $rows = DB::select('SELECT * FROM fn_route_multifloor_edges(now(), ?::gender_enum, ?::text, ?::smallint, ?::smallint,
+        return DB::transaction(function () use ($gender, $mode, $originFloor, $destinationFloor, $origin, $destination, $lang, $alternatives, $allowNearbyDestination, $destinationName) {
+            $endpointArguments = 'now(), ?::gender_enum, ?::text, ?::smallint, ?::smallint,
                 ST_Transform(ST_SetSRID(ST_MakePoint(?::float8,?::float8),4326),32640),
-                ST_Transform(ST_SetSRID(ST_MakePoint(?::float8,?::float8),4326),32640),?::int)',
-                [$gender,$mode,$originFloor,$destinationFloor,$origin['lon'],$origin['lat'],$destination['lon'],$destination['lat'],$alternatives+1]);
+                ST_Transform(ST_SetSRID(ST_MakePoint(?::float8,?::float8),4326),32640)';
+            $bindings = [$gender, $mode, $originFloor, $destinationFloor, $origin['lon'], $origin['lat'], $destination['lon'], $destination['lat']];
+            $privateOrigin = $allowNearbyDestination && DB::scalar("SELECT EXISTS (
+                SELECT 1 FROM areas a WHERE a.floor=?::smallint
+                    AND a.attrs #>> '{access_policy,public_access}'='false'
+                    AND ST_Contains(a.geom, ST_Transform(ST_SetSRID(ST_MakePoint(?::float8,?::float8),4326),32640))
+            )", [$originFloor, $origin['lon'], $origin['lat']]);
+            $rows = $privateOrigin ? [] : DB::select("SELECT * FROM fn_route_multifloor_edges($endpointArguments, ?::int)", [...$bindings, $alternatives + 1]);
+            if (!$rows && $allowNearbyDestination) {
+                $nearbyRows = $privateOrigin ? [] : DB::select("SELECT * FROM fn_route_nearby_edges($endpointArguments)", $bindings);
+                $nearbyOrigin = !$nearbyRows;
+                if ($nearbyOrigin) {
+                    $nearbyRows = DB::select("SELECT * FROM fn_route_nearby_origin_edges($endpointArguments)", $bindings);
+                }
+                if ($nearbyRows) {
+                    $route = $this->assemble($nearbyRows, $mode, $lang);
+                    if ($nearbyOrigin) {
+                        [$lon, $lat] = json_decode($nearbyRows[0]->from_point, true)['coordinates'];
+                        $route['geo']['properties']['nearbyOrigin'] = [
+                            'coordinates' => [$lat, $lon],
+                            'floor' => (int) $nearbyRows[0]->from_floor,
+                        ];
+                        if ($route['steps'][0]['type'] === 'stepStart') {
+                            $route['steps'][0]['instruction'] = match ($lang) {
+                                'en' => 'Start at the marked point near your selected origin.',
+                                'ar' => 'ابدأ من النقطة المحددة قرب نقطة انطلاقك.',
+                                'ur' => 'اپنے منتخب مقام کے قریب نشان زدہ نقطے سے شروع کریں۔',
+                                default => 'مسیر را از نقطهٔ مشخص‌شده در نزدیکی مبدأ شروع کنید.',
+                            };
+                        }
+                    }
+                    if (!$nearbyOrigin || $nearbyRows[0]->nearby_destination) {
+                        $lastStep = array_key_last($route['steps']);
+                        $step = $route['steps'][$lastStep];
+                        $route['steps'][$lastStep]['instruction'] = $this->nearbyArrivalInstruction($lang, $destinationName);
+                        $route['geo']['properties']['nearbyDestination'] = [
+                            'coordinates' => [$step['coord']['lat'], $step['coord']['lon']],
+                            'floor' => $step['floor'],
+                        ];
+                    }
+                    $route['alternatives'] = [];
+
+                    return $route;
+                }
+            }
             if (!$rows) return ['status' => 'NO_PATH', 'message' => 'هیچ مسیر قابل دسترسی بین طبقات انتخاب‌شده یافت نشد.', 'steps' => [], 'alternatives' => []];
             $routes = [];
             foreach (collect($rows)->groupBy('path_id') as $path) $routes[] = $this->assemble($path->all(), $mode, $lang);
@@ -20,6 +63,16 @@ class MultiFloorRoutingService
             $main['alternatives'] = $routes;
             return $main;
         });
+    }
+
+    private function nearbyArrivalInstruction(string $lang, ?string $destinationName): string
+    {
+        return match ($lang) {
+            'en' => 'You have reached the closest accessible point to '.($destinationName ?: 'your destination').'.',
+            'ar' => 'وصلت إلى أقرب نقطة متاحة من '.($destinationName ?: 'وجهتك').'.',
+            'ur' => 'آپ '.($destinationName ?: 'اپنی منزل').' کے قریب ترین قابلِ رسائی مقام پر پہنچ گئے ہیں۔',
+            default => 'به نزدیک‌ترین نقطهٔ قابل‌دسترسی به '.($destinationName ?: 'مقصد').' رسیدید.',
+        };
     }
 
     private function assemble(array $edges, string $mode, string $lang): array

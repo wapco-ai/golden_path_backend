@@ -204,6 +204,85 @@ class RouteAlternativeDiversityTest extends TestCase
         $this->assertSame($main['segments'],$one['segments']);
     }
 
+    public function test_nearby_route_skips_a_closer_disconnected_graph_and_stays_on_the_requested_floor(): void
+    {
+        $migration = require database_path('migrations/2026_11_09_090000_add_nearby_route_destination.php');
+        $migration->up();
+        $originMigration = require database_path('migrations/2026_11_09_110000_add_nearby_route_origin.php');
+        $originMigration->up();
+        $private = $this->area([40,94,60,100]);
+        DB::table('areas')->where('id',$private)->update([
+            'is_closed'=>true, 'attrs'=>json_encode(['access_policy'=>['public_access'=>false]]),
+        ]);
+        $island = $this->area([35,101,65,111]);
+        $neighbor = $this->area([35,111,65,119]);
+        $this->door($island,$neighbor,45,111);
+        $this->door($island,$neighbor,55,111);
+        $this->buildCorridors(false);
+
+        $body = [
+            'origin'=>$this->origin + ['type'=>'coordinate','floor'=>0],
+            'destination'=>$this->point(50,97) + ['type'=>'coordinate','floor'=>0,'name'=>'Private destination'],
+            'mode'=>'walk','gender'=>'both','lang'=>'en','maxAlternatives'=>0,
+        ];
+        $this->postJson('/api/v1/routing/route',$body)->assertNotFound()->assertJsonPath('status','NO_PATH');
+        $this->postJson('/api/v1/routing/route',$body + ['allowNearbyDestination'=>true])
+            ->assertNotFound()->assertJsonPath('status','NO_PATH');
+
+        $radiusMigration = require database_path('migrations/2026_11_09_100000_expand_nearby_route_radius.php');
+        $radiusMigration->up();
+        $route = $this->postJson('/api/v1/routing/route',$body + ['allowNearbyDestination'=>true])
+            ->assertOk()->assertJsonPath('geo.properties.nearbyDestination.floor',0)->json();
+        $arrival = end($route['steps']);
+        $this->assertSame('You have reached the closest accessible point to Private destination.', $arrival['instruction']);
+        $this->assertEquals(1,$arrival['routeM']);
+        $endpoint = $route['geo']['properties']['nearbyDestination']['coordinates'];
+        $this->assertSame(array_reverse($endpoint),end($route['geo']['geometry']['coordinates']));
+        $expected = $this->point(50,55.2);
+        $this->assertEqualsWithDelta($expected['lat'],$endpoint[0],0.000001);
+        $this->assertEqualsWithDelta($expected['lon'],$endpoint[1],0.000001);
+
+        $body['destination']['floor'] = 1;
+        $this->postJson('/api/v1/routing/route',$body + ['allowNearbyDestination'=>true])
+            ->assertNotFound()->assertJsonPath('status','NO_PATH');
+    }
+
+    public function test_private_origin_uses_the_nearby_graph_and_can_keep_an_exact_destination(): void
+    {
+        foreach ([
+            '2026_11_09_090000_add_nearby_route_destination.php',
+            '2026_11_09_110000_add_nearby_route_origin.php',
+        ] as $migrationName) {
+            $migration = require database_path('migrations/'.$migrationName);
+            $migration->up();
+        }
+        $start = $this->area([25,70,35,76]);
+        $finish = $this->area([65,70,75,76]);
+        DB::table('areas')->whereIn('id', [$start, $finish])->update([
+            'is_closed'=>true, 'attrs'=>json_encode(['access_policy'=>['public_access'=>false]]),
+        ]);
+        $this->buildCorridors(false);
+
+        $body = [
+            'origin'=>$this->point(30,73) + ['type'=>'coordinate','floor'=>0],
+            'destination'=>$this->destination + ['type'=>'coordinate','floor'=>0],
+            'mode'=>'walk','gender'=>'both','lang'=>'en','maxAlternatives'=>0,
+            'allowNearbyDestination'=>true,
+        ];
+        $route = $this->postJson('/api/v1/routing/route',$body)
+            ->assertOk()->assertJsonPath('geo.properties.nearbyOrigin.floor',0)
+            ->assertJsonMissingPath('geo.properties.nearbyDestination')->json();
+        $coordinates = $route['geo']['geometry']['coordinates'];
+        $this->assertSame(array_reverse($route['geo']['properties']['nearbyOrigin']['coordinates']),$coordinates[0]);
+        $this->assertEqualsWithDelta($this->destination['lat'],end($coordinates)[1],0.00000001);
+
+        $body['destination'] = $this->point(70,73) + ['type'=>'coordinate','floor'=>0];
+        $route = $this->postJson('/api/v1/routing/route',$body)->assertOk()
+            ->assertJsonPath('geo.properties.nearbyOrigin.floor',0)
+            ->assertJsonPath('geo.properties.nearbyDestination.floor',0)->json();
+        $this->assertLessThan(45,$route['distanceMeters']);
+    }
+
     public function test_closed_corridors_are_not_reintroduced_as_alternatives(): void
     {
         $this->buildCorridors();
