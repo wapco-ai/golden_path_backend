@@ -10,14 +10,14 @@ class AreaEndpointService
 
     // A group is available only when all configured public members exist on its floor.
     private const PUBLIC_GROUPS_SQL = <<<'SQL'
-        SELECT g.id, g.floor, g.area_ids, ST_Union(a.geom) AS geom
+        SELECT g.id, g.floor, g.area_ids, g.search_excluded_area_ids, ST_Union(a.geom) AS geom
         FROM input
         CROSS JOIN LATERAL jsonb_to_recordset(input.groups)
-            AS g(id text, floor smallint, area_type text, area_ids bigint[])
+            AS g(id text, floor smallint, area_type text, area_ids bigint[], search_excluded_area_ids bigint[])
         JOIN areas a ON a.id = ANY(g.area_ids) AND a.floor = g.floor AND a.area_type::text = g.area_type
         WHERE (a.attrs #>> '{access_policy,public_access}') IS DISTINCT FROM 'false'
           AND NOT ST_IsEmpty(a.geom)
-        GROUP BY g.id, g.floor, g.area_ids
+        GROUP BY g.id, g.floor, g.area_ids, g.search_excluded_area_ids
         HAVING count(*) = cardinality(g.area_ids)
         SQL;
 
@@ -58,15 +58,22 @@ class AreaEndpointService
                 FROM candidates c CROSS JOIN input
                 WHERE lower(btrim(regexp_replace(translate(c.title, 'يىك‌‍ ', 'ییک   '), '[[:space:]]+', ' ', 'g')))
                     = NULLIF(lower(btrim(regexp_replace(translate(input.search, 'يىك‌‍ ', 'ییک   '), '[[:space:]]+', ' ', 'g'))), '')
+            ), eligible_areas AS (
+                SELECT * FROM matches WHERE kind = 'area' AND ST_Area(geom) >= ?
             )
             SELECT a.id, a.group_id, a.floor, a.title, ST_Y(point.geom) AS lat, ST_X(point.geom) AS lon,
                 to_jsonb(g.area_ids) AS member_area_ids,
                 (SELECT jsonb_agg(p.id::text) FROM matches p
                  WHERE p.kind = 'poi' AND p.floor = a.floor AND ST_Covers(a.geom, p.geom)) AS duplicate_poi_ids
-            FROM matches a
+            FROM eligible_areas a
             LEFT JOIN groups g ON g.id = a.group_id
             CROSS JOIN LATERAL (SELECT ST_Transform(ST_PointOnSurface(a.geom), 4326) AS geom) point
-            WHERE a.kind = 'area' AND ST_Area(a.geom) >= ?
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM eligible_areas matched_group
+                JOIN groups configured_group ON configured_group.id = matched_group.group_id
+                WHERE a.id = ANY(configured_group.search_excluded_area_ids)
+            )
             ORDER BY a.floor, a.id, a.group_id
             LIMIT ?
             SQL, [

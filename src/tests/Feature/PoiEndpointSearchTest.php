@@ -233,6 +233,41 @@ class PoiEndpointSearchTest extends TestCase
             ->assertUnprocessable();
     }
 
+    public function test_an_exact_group_match_hides_only_configured_same_name_auxiliary_areas(): void
+    {
+        $title = 'رواق کوی آزمون';
+        $groupArea = $this->area($title, 0, 500040, 500080);
+        $auxiliary = $this->area($title, 0, 500000, 500040);
+        $separate = $this->area($title, 0, 500080, 500120);
+        $independentPoi = (string) $this->poi(0, $title);
+        $group = [
+            'floor' => 0,
+            'area_type' => 'courtyard',
+            'area_ids' => [$groupArea],
+            'search_excluded_area_ids' => [$auxiliary],
+        ];
+        config(['area_endpoints.groups' => ['test-riwaq' => $group]]);
+
+        $exact = ['search' => $title, 'include_exact_areas' => 1];
+        $expected = ["area-{$separate}", 'area-group-test-riwaq', $independentPoi];
+        $this->assertSame($expected, array_column($this->places($exact), 'id'));
+        $normalized = $this->places([...$exact, 'search' => 'رواق  كوي‌ آزمون']);
+        $this->assertSame([$separate], array_column($normalized, 'areaId'));
+        $this->assertSame(['test-riwaq'], array_column($normalized, 'areaGroupId'));
+        $this->getJson("/api/v1/area-doors?area_id={$auxiliary}&floor=0")
+            ->assertOk()->assertJsonPath('data.area.id', $auxiliary);
+
+        // Keep the auxiliary result if its own title is requested or the group is unavailable.
+        DB::table('i18n_texts')->where('entity_table', 'areas')->where('entity_id', $auxiliary)
+            ->update(['txt' => 'اتاق خدمات آزمون']);
+        $renamed = $this->places([...$exact, 'search' => 'اتاق خدمات آزمون']);
+        $this->assertSame([$auxiliary], array_column($renamed, 'areaId'));
+        DB::table('i18n_texts')->where('entity_table', 'areas')->where('entity_id', $auxiliary)
+            ->update(['txt' => $title]);
+        config(['area_endpoints.groups' => ['test-riwaq' => [...$group, 'floor' => -1]]]);
+        $this->assertSame([$groupArea, $auxiliary, $separate], array_column($this->places($exact), 'areaId'));
+    }
+
     private function area(string $name, int $floor, int $left, int $right, array $attrs = []): int
     {
         $id = (int) DB::selectOne(
