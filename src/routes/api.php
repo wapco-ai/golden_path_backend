@@ -42,6 +42,8 @@ use App\Http\Controllers\Api\DestinationsController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\UsersController;
 use App\Http\Middleware\UserAuth;
+use App\Http\Middleware\OptionalUserAuth;
+use App\Http\Controllers\Api\EmergencyController;
 
 use App\Http\Controllers\Api\Admin\DashboardController;
 
@@ -272,15 +274,16 @@ Route::prefix('v1')->group(function () {
     Route::get('/feedbacks', [FeedbackController::class, 'index']);
     // خلاصه‌ی امتیاز (ratingAvg, ratingCount, ...)
     Route::get('/feedbacks/summary', [FeedbackController::class, 'summary']);
-    Route::post('/feedbacks', [FeedbackController::class, 'store']);
+    Route::post('/feedbacks', [FeedbackController::class, 'store'])->middleware([OptionalUserAuth::class, 'throttle:30,1']);
 
     // Public guidance points for route instructions; no route FK by design
     Route::get('/guidance-points', [GuidancePointsPublicController::class, 'index']);
 
 
     // User endpoints
-    Route::post('/support/feedback', [SupportFeedbackController::class, 'store']);
-    Route::get('/support/feedbacks/me', [SupportFeedbackController::class, 'myList']); // اگر می‌خوای فقط لاگین: زیر middleware auth
+    Route::post('/emergencies', [EmergencyController::class, 'store'])->middleware([OptionalUserAuth::class, 'throttle:10,1']);
+    Route::post('/support/feedback', [SupportFeedbackController::class, 'store'])->middleware(OptionalUserAuth::class);
+    Route::get('/support/feedbacks/me', [SupportFeedbackController::class, 'myList'])->middleware(UserAuth::class); // اگر می‌خوای فقط لاگین: زیر middleware auth
 
 
     // NOTE: CulturalItems CRUD and Doors/Areas CRUD are admin-only and moved under AdminAuth middleware above.
