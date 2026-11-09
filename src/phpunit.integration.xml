@@ -11,8 +11,6 @@
         <testsuite name="Feature">
             <file>tests/Feature/AdminPasswordLockPostgresTest.php</file>
             <file>tests/Feature/MultiFloorConnectorTest.php</file>
-            <file>tests/Feature/SameFloorStairTest.php</file>
-            <file>tests/Feature/SameFloorStairRouteOutputTest.php</file>
             <file>tests/Feature/RouteAlternativeDiversityTest.php</file>
             <file>tests/Feature/PublicPlaceFloorTest.php</file>
             <file>tests/Feature/PoiEndpointSearchTest.php</file>
@@ -28,6 +26,10 @@
             <file>tests/Feature/DashboardRecentUsersAdminTest.php</file>
             <file>tests/Feature/RazaviAuthPostgresTest.php</file>
             <file>tests/Feature/GuidanceRoleMigrationTest.php</file>
+        </testsuite>
+        <testsuite name="SameFloorStairs">
+            <file>tests/Feature/SameFloorStairTest.php</file>
+            <file>tests/Feature/SameFloorStairRouteOutputTest.php</file>
         </testsuite>
     </testsuites>
     <source>
