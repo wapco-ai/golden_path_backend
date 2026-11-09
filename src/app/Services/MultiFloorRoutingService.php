@@ -18,12 +18,12 @@ class MultiFloorRoutingService
                     AND a.attrs #>> '{access_policy,public_access}'='false'
                     AND ST_Contains(a.geom, ST_Transform(ST_SetSRID(ST_MakePoint(?::float8,?::float8),4326),32640))
             )", [$originFloor, $origin['lon'], $origin['lat']]);
-            $rows = $privateOrigin ? [] : DB::select("SELECT * FROM fn_route_multifloor_edges($endpointArguments, ?::int)", [...$bindings, $alternatives + 1]);
+            $rows = $privateOrigin ? [] : $this->selectEdges("fn_route_multifloor_edges($endpointArguments, ?::int)", [...$bindings, $alternatives + 1]);
             if (!$rows && $allowNearbyDestination) {
-                $nearbyRows = $privateOrigin ? [] : DB::select("SELECT * FROM fn_route_nearby_edges($endpointArguments)", $bindings);
+                $nearbyRows = $privateOrigin ? [] : $this->selectEdges("fn_route_nearby_edges($endpointArguments)", $bindings);
                 $nearbyOrigin = !$nearbyRows;
                 if ($nearbyOrigin) {
-                    $nearbyRows = DB::select("SELECT * FROM fn_route_nearby_origin_edges($endpointArguments)", $bindings);
+                    $nearbyRows = $this->selectEdges("fn_route_nearby_origin_edges($endpointArguments)", $bindings);
                 }
                 if ($nearbyRows) {
                     $route = $this->assemble($nearbyRows, $mode, $lang);
@@ -65,6 +65,20 @@ class MultiFloorRoutingService
         });
     }
 
+    private function selectEdges(string $functionCall, array $bindings): array
+    {
+        return DB::select("
+            SELECT route_edges.*, stair.src AS stair_lower_node, stair.attrs->>'stair_id' AS stair_id
+            FROM $functionCall AS route_edges
+            LEFT JOIN routing_edges_static AS stair
+                ON stair.id = route_edges.edge_id
+                AND stair.attrs->>'edge_type' = 'same_floor_stair'
+                AND route_edges.from_node IN (stair.src, stair.dst)
+                AND route_edges.to_node IN (stair.src, stair.dst)
+            ORDER BY route_edges.path_id, route_edges.path_seq
+        ", $bindings);
+    }
+
     private function nearbyArrivalInstruction(string $lang, ?string $destinationName): string
     {
         return match ($lang) {
@@ -80,7 +94,9 @@ class MultiFloorRoutingService
         $segments = []; $walk = []; $steps = []; $sahns = [];
         $flush = function () use (&$walk, &$segments, &$steps, &$sahns, $mode, $lang) {
             if (!$walk) return;
-            $coordinates = []; $pathEdges = [];
+            $coordinates = []; $pathEdges = []; $stairSteps = [];
+            $distance = array_sum(array_column($walk, 'distance_m'));
+            $walkedDistance = 0.0;
             foreach ($walk as $edge) {
                 $points = json_decode($edge->geometry_json, true)['coordinates'];
                 foreach ($points as $point) {
@@ -88,6 +104,10 @@ class MultiFloorRoutingService
                 }
                 $pathEdges[] = ['seq'=>count($pathEdges)+1,'edgeId'=>$edge->edge_id,'doorId'=>$edge->door_id,
                     'fromNode'=>$edge->from_node,'toNode'=>$edge->to_node];
+                if ($edge->stair_id !== null && $distance > 0) {
+                    $stairSteps[] = $this->stairStep($edge, $points, $walkedDistance, $distance, $lang);
+                }
+                $walkedDistance += (float) $edge->distance_m;
             }
             if (count($coordinates) === 1) $coordinates[] = $coordinates[0];
             $geom = ['type'=>'LineString','coordinates'=>$coordinates];
@@ -97,9 +117,12 @@ class MultiFloorRoutingService
             $built = json_decode($row->data, true);
             $segmentId = count($segments);
             $duration = array_sum(array_column($walk, 'duration_s'));
-            $distance = array_sum(array_column($walk, 'distance_m'));
+            $builtSteps = array_merge($built['steps'] ?? [], $stairSteps);
+            if ($stairSteps) {
+                usort($builtSteps, fn ($a, $b) => $a['routeM'] <=> $b['routeM']);
+            }
             $segmentSteps = [];
-            foreach ($built['steps'] ?? [] as $step) {
+            foreach ($builtSteps as $step) {
                 if (($step['type'] ?? '') === 'stepArriveDestination') continue;
                 $step['floor'] = $floor; $step['segmentId'] = $segmentId;
                 $segmentSteps[] = $step;
@@ -151,5 +174,33 @@ class MultiFloorRoutingService
             'steps'=>$steps,'sahns'=>$sahns,'segments'=>$segments,'multifloor'=>$multifloor,
             'geo'=>['type'=>'Feature','geometry'=>['type'=>$multifloor ? 'MultiLineString' : 'LineString','coordinates'=>$multifloor ? $lines : ($lines[0] ?? [])],
                 'properties'=>['segments'=>$segments,'multifloor'=>$multifloor,'distanceMeters'=>$distance,'durationSeconds'=>$duration]]];
+    }
+
+    private function stairStep(object $edge, array $points, float $walkedDistance, float $distance, string $lang): array
+    {
+        $up = (int) $edge->from_node === (int) $edge->stair_lower_node;
+        $instruction = match ($lang) {
+            'en' => $up ? 'Go up the stairs.' : 'Go down the stairs.',
+            'ar' => $up ? 'اصعد الدرج.' : 'انزل الدرج.',
+            'ur' => $up ? 'سیڑھیوں سے اوپر جائیں۔' : 'سیڑھیوں سے نیچے جائیں۔',
+            default => $up ? 'از پله‌ها بالا بروید.' : 'از پله‌ها پایین بروید.',
+        };
+        [$fromLon, $fromLat] = $points[0];
+        [$toLon, $toLat] = end($points);
+
+        return [
+            'type' => 'stepUseStairs',
+            'title' => $instruction,
+            'instruction' => $instruction,
+            'coord' => ['lat' => $fromLat, 'lon' => $fromLon],
+            'endCoord' => ['lat' => $toLat, 'lon' => $toLon],
+            'routeM' => $walkedDistance / $distance,
+            'endRouteM' => min(1.0, ($walkedDistance + $edge->distance_m) / $distance),
+            'edgeId' => (int) $edge->edge_id,
+            'stairId' => (int) $edge->stair_id,
+            'stairDirection' => $up ? 'up' : 'down',
+            'distance_m' => (float) $edge->distance_m,
+            'duration_s' => (float) $edge->duration_s,
+        ];
     }
 }
