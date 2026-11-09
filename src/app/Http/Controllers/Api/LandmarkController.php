@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Services\AreaEndpointService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -17,9 +18,9 @@ class LandmarkController extends Controller
      *  - limit: int (optional, default 2000)
      *  - geo[lat], geo[lng]: float (optional)
      *  - poi_id: int (optional)    // برای Landmarkهای جدول poi_points
-     *  - area_id: int (optional)   // برای Landmarkهای جدول areas
+     *  - include_exact_areas: boolean (optional, exact public area matches for destination text search)
      */
-    public function landmarkPlaces(Request $request)
+    public function landmarkPlaces(Request $request, AreaEndpointService $areaEndpoints)
     {
         $data = $request->validate([
             'language'   => 'nullable|string|in:fa,en,ar,ur',
@@ -29,6 +30,7 @@ class LandmarkController extends Controller
             'poi_id'     => 'nullable|integer',
             'search'     => 'nullable|string|max:100',
             'featured' => 'nullable|boolean',
+            'include_exact_areas' => 'nullable|boolean',
         ]);
 
         $language = $data['language'] ?? 'fa';
@@ -61,6 +63,15 @@ class LandmarkController extends Controller
                     'language'    => $language,
                     'generatedAt' => now()->toIso8601String(),
                 ];
+            }
+
+            if (($data['include_exact_areas'] ?? false) && !$featured && $poiId === null && trim((string) $search) !== '') {
+                $payload['places']['landmarkPlaces'] = $areaEndpoints->includeExactMatches(
+                    $payload['places']['landmarkPlaces'] ?? [],
+                    $search,
+                    $language,
+                    $limit,
+                );
             }
 
             // تضمین language / generatedAt
