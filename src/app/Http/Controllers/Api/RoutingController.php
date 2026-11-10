@@ -117,13 +117,26 @@ class RoutingController extends Controller
             $points = ['origin' => $o, 'destination' => $d];
             foreach ($points as $side => $point) {
                 if (!in_array($point['type'], ['coordinate', 'door'], true)) {
-                    throw ValidationException::withMessages([$side => 'Choose a coordinate or a door.']);
+                    $log['meta']['status'] = 'UNSUPPORTED';
+                    $log['meta']['http_code'] = 422;
+                    $this->insertRouteLogSafe($log, $t0);
+                    return response()->json([
+                        'ok' => false,
+                        'message' => 'مبدأ و مقصد باید مختصات یا درب انتخاب‌شده باشند.',
+                    ], 422);
                 }
                 if ($point['type'] === 'coordinate' && (empty($point['lat']) || empty($point['lon']))) {
-                    throw ValidationException::withMessages([$side => 'Coordinates are required.']);
+                    $log['meta']['status'] = 'VALIDATION';
+                    $log['meta']['http_code'] = 422;
+                    $log['meta']['error'] = 'MISSING_LAT_LON';
+                    $this->insertRouteLogSafe($log, $t0);
+                    return response()->json([
+                        'ok' => false,
+                        'message' => 'برای type=coordinate باید lat/lon مبدا و مقصد ارسال شود.',
+                    ], 422);
                 }
                 if ($point['type'] === 'door' && !isset($point['floor'])) {
-                    throw ValidationException::withMessages([$side => 'A door requires a floor.']);
+                    throw ValidationException::withMessages([$side => 'طبقهٔ درب باید مشخص باشد.']);
                 }
             }
 

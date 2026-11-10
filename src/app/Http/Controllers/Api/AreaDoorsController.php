@@ -81,7 +81,7 @@ class AreaDoorsController extends Controller
             ], 400);
         }
 
-        if (!empty($payload['doors'])) {
+        if (!empty($payload['doors']) && (isset($data['mode']) || isset($data['gender']))) {
             $ids = array_map('intval', $area['memberAreaIds'] ?? [$area['id']]);
             $statuses = collect($doorEndpoints->forAreas($ids, (int) $area['floor'], $data['mode'] ?? 'walk', $data['gender'] ?? 'both', $lang))
                 ->keyBy(fn ($row) => $row->access_id.':'.$row->area_id);
