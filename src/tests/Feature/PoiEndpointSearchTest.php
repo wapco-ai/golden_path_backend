@@ -166,7 +166,8 @@ class PoiEndpointSearchTest extends TestCase
         $this->assertEqualsCanonicalizing([$proxy, $internal], array_column($this->places(['search' => $title]), 'id'));
         $partial = ['search' => 'كوي آزمون', 'include_exact_areas' => 1];
         $this->assertSame(["area-{$lower}", $internal, "area-{$ground}"], array_column($this->places($partial), 'id'));
-        $this->assertSame(["area-{$lower}", $internal], array_column($this->places([...$partial, 'limit' => 2]), 'id'));
+        // The omitted ground-floor area must not hide its otherwise eligible POI.
+        $this->assertSame(["area-{$lower}", $proxy], array_column($this->places([...$partial, 'limit' => 2]), 'id'));
 
         $matches = $this->places(['search' => $title, 'include_exact_areas' => 1]);
         $this->assertSame(["area-{$lower}", "area-{$ground}", $internal], array_column($matches, 'id'));

@@ -100,8 +100,16 @@ class AreaEndpointService
 
         $exactAreas = [];
         $partialAreas = [];
-        $duplicatePoiIds = [];
-        foreach ($rows as $row) {
+        $pois = array_column($places, null, 'id');
+        $exactCount = count(array_filter($rows, fn ($row) => $row->exact_match));
+        $areaSlots = $exactCount + intdiv($limit - $exactCount + 1, 2);
+        foreach ($rows as $index => $row) {
+            // Reserve roughly half the open slots for partial areas. Add more only
+            // when there are too few distinct points to fill the response.
+            if ($index >= $areaSlots && $index + count($pois) >= $limit) {
+                break;
+            }
+
             $identity = $row->group_id !== null
                 ? [
                     'id' => "area-group-{$row->group_id}",
@@ -122,12 +130,11 @@ class AreaEndpointService
                 $partialAreas[] = $area;
             }
             foreach (json_decode($row->duplicate_poi_ids ?? '[]', true, flags: JSON_THROW_ON_ERROR) as $poiId) {
-                $duplicatePoiIds[$poiId] = true;
+                unset($pois[$poiId]);
             }
         }
 
-        // Only a POI sharing the area's name or alias is a duplicate.
-        $pois = array_values(array_filter($places, fn (array $place) => !isset($duplicatePoiIds[$place['id']])));
+        $pois = array_values($pois);
         // Interleave partial areas with points so a broad match can surface both.
         $results = $exactAreas;
         foreach ($partialAreas as $index => $area) {
