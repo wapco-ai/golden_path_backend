@@ -4,6 +4,7 @@ namespace App\Services;
 
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class SameFloorStairService
@@ -19,6 +20,10 @@ class SameFloorStairService
 
     public function forAccessPoint(int $accessId): ?array
     {
+        if (!Schema::hasTable('same_floor_stairs')) {
+            return null;
+        }
+
         $stairs = $this->records(DB::table('same_floor_stairs')->where(function (Builder $query) use ($accessId) {
             $query->where('start_access_id', $accessId)->orWhere('end_access_id', $accessId);
         })->limit(2));
