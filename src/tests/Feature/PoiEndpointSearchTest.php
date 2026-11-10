@@ -153,6 +153,31 @@ class PoiEndpointSearchTest extends TestCase
         ]), 'id'));
     }
 
+    public function test_area_search_preserves_a_matching_poi_with_localized_cultural_content(): void
+    {
+        $area = $this->area('روضه آزمون', 0, 500000, 500040);
+        $title = 'روضه آزمونی';
+        $cultural = $this->poi(0, $title);
+        $this->poi(0, $title, true);
+        config(['area_endpoints.search_aliases.fa' => [$area => [$title]]]);
+        DB::table('contents')->insert([
+            'poi_id' => $cultural, 'lang' => 'fa', 'title' => $title, 'body' => 'متن فرهنگی آزمون',
+        ]);
+
+        foreach ([$title, 'روضه'] as $search) {
+            $matches = $this->places(['search' => $search, 'include_exact_areas' => 1]);
+            $this->assertSame(["area-{$area}", (string) $cultural], array_column($matches, 'id'));
+            $this->assertSame(['area', 'cultural'], array_column($matches, 'kind'));
+            $this->assertSame('روضه آزمون', $matches[0]['title']);
+            $this->assertSame($title, $matches[1]['title']);
+            $this->assertSame('متن فرهنگی آزمون', $matches[1]['content']['body']);
+        }
+
+        $details = $this->places(['poi_id' => $cultural]);
+        $this->assertSame($title, $details[0]['title']);
+        $this->assertArrayNotHasKey('kind', $details[0]);
+    }
+
     public function test_destination_search_includes_partial_public_areas_and_distinct_pois(): void
     {
         $title = 'صحن کوی آزمون';
