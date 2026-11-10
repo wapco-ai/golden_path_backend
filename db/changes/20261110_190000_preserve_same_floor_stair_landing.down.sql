@@ -187,4 +187,21 @@ WHERE dap.door_id = p_door_id
 END;
 $function$;
 
+DO $patch$
+DECLARE
+    definition text := pg_get_functiondef(
+        'public.fn_rebuild_graph_for_door(bigint,boolean,double precision,double precision)'::regprocedure
+    );
+    original text := replace(
+        definition, 'public.fn_door_rebuild_landing_geom(dap.id, ', 'public.fn_dap_node_geom_inside_area('
+    );
+BEGIN
+    IF original <> definition THEN
+        EXECUTE original;
+    END IF;
+END
+$patch$;
+
+DROP FUNCTION IF EXISTS public.fn_door_rebuild_landing_geom(bigint, public.geometry, bigint, double precision);
+
 COMMIT;

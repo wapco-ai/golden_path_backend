@@ -230,4 +230,48 @@ BEGIN
 END;
 $function$;
 
+-- Older door rebuilds inset DAP coordinates for ordinary portals. Stair landings
+-- require exact DAP coordinates to match the validated, node-derived stair edge.
+CREATE OR REPLACE FUNCTION public.fn_door_rebuild_landing_geom(
+    p_access_id bigint, p_geom public.geometry, p_area_id bigint, p_clearance_m double precision
+) RETURNS public.geometry
+LANGUAGE sql STABLE
+SET search_path = pg_catalog, public
+AS $landing$
+    SELECT CASE
+        WHEN EXISTS (
+            SELECT 1 FROM public.same_floor_stairs s
+            WHERE s.start_access_id = p_access_id OR s.end_access_id = p_access_id
+        ) OR EXISTS (
+            SELECT 1
+            FROM public.door_access_points p
+            JOIN public.areas a ON a.id IN (p.from_area, p.to_area) AND a.floor = p.floor
+            WHERE p.id = p_access_id AND a.area_type = 'stair_area'
+              AND public.fn_area_routing_role(a.area_type, a.attrs) = 'transparent'
+        ) THEN p_geom
+        ELSE public.fn_dap_node_geom_inside_area(p_geom, p_area_id, p_clearance_m)
+    END
+$landing$;
+
+DO $patch$
+DECLARE
+    legacy_call constant text := 'public.fn_dap_node_geom_inside_area(';
+    landing_call constant text := 'public.fn_door_rebuild_landing_geom(dap.id, ';
+    definition text := pg_get_functiondef(
+        'public.fn_rebuild_graph_for_door(bigint,boolean,double precision,double precision)'::regprocedure
+    );
+    updated text;
+BEGIN
+    updated := replace(definition, legacy_call, landing_call);
+    -- Current runtimes already build exact DAP nodes and require no rewrite.
+    IF updated = definition THEN
+        RETURN;
+    END IF;
+    IF length(definition) - length(replace(definition, legacy_call, '')) <> 2 * length(legacy_call) THEN
+        RAISE EXCEPTION 'Unexpected legacy door rebuild definition';
+    END IF;
+    EXECUTE updated;
+END
+$patch$;
+
 COMMIT;

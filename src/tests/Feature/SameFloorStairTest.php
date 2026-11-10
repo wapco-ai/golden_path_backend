@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Http\Middleware\AdminAuth;
 use App\Http\Middleware\AdminSectionAccess;
+use App\Jobs\RebuildDoorGraphJob;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -253,7 +254,12 @@ class SameFloorStairTest extends TestCase
             ->assertJsonPath('connector.version', $stair['version'] + 1)
             ->assertJsonPath('connector.stops.0.error', null);
 
-        DB::select('SELECT fn_build_routing_nodes((-1)::smallint)');
+        (new RebuildDoorGraphJob($landing['door_id']))->handle();
+        // The test's outer transaction keeps commit-time edge refresh deferred.
+        DB::statement('SET CONSTRAINTS same_floor_stair_edge_removed IMMEDIATE');
+        $this->assertSame('ready', DB::scalar(
+            "SELECT attrs->'graph'->>'status' FROM doors WHERE id=?", [$landing['door_id']]
+        ));
         $this->assertTrue((bool) DB::scalar(<<<'SQL'
             SELECT EXISTS (
                 SELECT 1 FROM routing_edges_static e
