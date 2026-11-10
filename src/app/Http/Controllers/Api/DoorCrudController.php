@@ -892,7 +892,7 @@ class DoorCrudController extends Controller
             'operational.transport_modes' => 'nullable|array',
             'operational.transport_modes.*' => 'string',
             'operational.gender_access' => 'nullable|array',
-            'operational.gender_access.*' => 'string',
+            'operational.gender_access.*' => 'required|string|in:male,female,both,family',
             'operational.place_function' => 'nullable|in:door,connection,stair,ramp,elevator,escalator',
             'operational.is_covered' => 'nullable|boolean',
 
@@ -974,6 +974,17 @@ class DoorCrudController extends Controller
             $operReq   = $data['operational'] ?? [];
             $groupReq  = $data['grouping'] ?? [];
             $notesReq  = isset($data['notes']) ? trim((string)$data['notes']) : '';
+            $genderAccess = $operReq['gender_access'] ?? [];
+            $allowedGender = $genderAccess === [] ? null : $this->normalizeAllowedGender($genderAccess);
+            if ($allowedGender === null) {
+                $storedAttrs = DB::table('doors')->where('id', $doorId)->lockForUpdate()->value('attrs');
+                $genderAccess = json_decode($storedAttrs ?? '{}', true)['operational']['gender_access'] ?? [];
+            } else {
+                $genderAccess = array_values(array_unique(array_map(
+                    static fn (string $gender): string => $gender === 'family' ? 'both' : $gender,
+                    $genderAccess
+                )));
+            }
 
             $desc = isset($data['basic_info']['description'])
                 ? trim((string)$data['basic_info']['description'])
@@ -981,7 +992,7 @@ class DoorCrudController extends Controller
 
             $operMeta = [
                 'status'         => $operReq['status'] ?? null,
-                'gender_access'  => $operReq['gender_access'] ?? [],
+                'gender_access'  => $genderAccess,
                 'description'    => $desc,
                 'place_function' => $operReq['place_function'] ?? 'door',
                 'is_covered'     => $operReq['is_covered'] ?? null,
@@ -1004,8 +1015,11 @@ class DoorCrudController extends Controller
             $transportModes = $operReq['transport_modes'] ?? [];
 
             $updates = [
-                'attrs' => DB::raw("COALESCE(attrs, '{}'::jsonb) || '{$attrsJson}'::jsonb"),
+                'attrs' => DB::raw("COALESCE(attrs, '{}'::jsonb) || " . DB::connection()->escape($attrsJson) . '::jsonb'),
             ];
+            if ($allowedGender !== null) {
+                $updates['allowed_gender'] = $allowedGender;
+            }
 
             // ---- routing updates (from/to + bidirectional) ----
             $routingReq = $data['routing'] ?? [];
@@ -1061,16 +1075,15 @@ class DoorCrudController extends Controller
             //     'door_id' => $doorId,
             // ]);
 
-            // 3) access_*_restrictions: پاک و بازسازی (برای doors)
-            DB::table('access_time_restrictions')
-                ->where('entity_table', 'doors')
-                ->where('entity_id', $doorId)
-                ->delete();
-
-            DB::table('access_prayer_restrictions')
-                ->where('entity_table', 'doors')
-                ->where('entity_id', $doorId)
-                ->delete();
+            // Omitted restrictions are unchanged. An explicit empty array clears them.
+            foreach (['time_restrictions', 'prayer_restrictions'] as $key) {
+                if (isset($data[$key])) {
+                    DB::table('access_' . $key)
+                        ->where('entity_table', 'doors')
+                        ->where('entity_id', $doorId)
+                        ->delete();
+                }
+            }
 
             // helper برای text[]
             $toPgTextArray = function (?array $arr) {
