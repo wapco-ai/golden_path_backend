@@ -121,13 +121,24 @@ class MultiFloorRoutingService
             if ($stairSteps) {
                 usort($builtSteps, fn ($a, $b) => $a['routeM'] <=> $b['routeM']);
             }
-            $segmentSteps = [];
-            foreach ($builtSteps as $step) {
-                if (($step['type'] ?? '') === 'stepArriveDestination') continue;
+            $segmentSteps = array_values(array_filter(
+                $builtSteps,
+                fn ($step) => ($step['type'] ?? '') !== 'stepArriveDestination'
+            ));
+            $elapsed = $this->elapsedAtSteps($segmentSteps, $walk, $distance, $duration);
+            foreach ($segmentSteps as $index => &$step) {
                 $step['floor'] = $floor; $step['segmentId'] = $segmentId;
-                $segmentSteps[] = $step;
+                $step['elapsed_s'] = $elapsed[$index];
+                $spanDuration = max(0.0, ($elapsed[$index + 1] ?? $duration) - $elapsed[$index]);
+                if ($step['type'] === 'stepUseStairs') {
+                    $step['end_elapsed_s'] = min($duration, $step['elapsed_s'] + $step['duration_s']);
+                    $step['span_duration_s'] = $spanDuration;
+                } else {
+                    $step['duration_s'] = $spanDuration;
+                }
                 $steps[] = $step;
             }
+            unset($step);
             $segments[] = ['id'=>$segmentId,'kind'=>'walk','floor'=>$floor,'geometry'=>$geom,
                 'distance_m'=>$distance,'duration_s'=>$duration,'steps'=>$segmentSteps];
             $sahns = array_merge($sahns, $built['sahns'] ?? []);
@@ -158,7 +169,8 @@ class MultiFloorRoutingService
         $flush();
         $end = json_decode(end($edges)->to_point, true)['coordinates'];
         $steps[] = ['type'=>'stepArriveDestination','title'=>'','coord'=>['lat'=>$end[1],'lon'=>$end[0]],
-            'floor'=>(int)end($edges)->to_floor,'segmentId'=>count($segments)-1,'routeM'=>1];
+            'floor'=>(int)end($edges)->to_floor,'segmentId'=>count($segments)-1,'routeM'=>1,
+            'elapsed_s'=>(float)end($segments)['duration_s'],'duration_s'=>0];
         foreach ($steps as $i => &$step) $step['stepOrder'] = $i + 1;
         unset($step);
         $distance = array_sum(array_column($segments,'distance_m'));
@@ -166,6 +178,7 @@ class MultiFloorRoutingService
         $lines = array_values(array_map(fn ($s) => $s['geometry']['coordinates'], array_filter($segments, fn ($s) => $s['kind']==='walk')));
         $multifloor = count(array_filter($segments, fn ($s) => $s['kind']!=='walk')) > 0;
         return ['status'=>'OK','source'=>'computed','distanceMeters'=>$distance,'estimatedMinutes'=>$duration/60,
+            'duration_s'=>$duration,
             'steps'=>$steps,'sahns'=>$sahns,'segments'=>$segments,'multifloor'=>$multifloor,
             'geo'=>['type'=>'Feature','geometry'=>['type'=>$multifloor ? 'MultiLineString' : 'LineString','coordinates'=>$multifloor ? $lines : ($lines[0] ?? [])],
                 'properties'=>['segments'=>$segments,'multifloor'=>$multifloor,'distanceMeters'=>$distance,'durationSeconds'=>$duration]]];
@@ -188,6 +201,42 @@ class MultiFloorRoutingService
             'ur' => "{$title} سے منزل {$toFloor} پر جائیں۔",
             default => "از {$title} به طبقهٔ {$toFloor} بروید.",
         };
+    }
+
+    private function elapsedAtSteps(array $steps, array $edges, float $distance, float $duration): array
+    {
+        $elapsed = [];
+        $edgeIndex = 0;
+        $edgeStart = 0.0;
+        $elapsedBeforeEdge = 0.0;
+
+        // Route measures are relative to this walk segment. Interpolate only within
+        // each edge so separately timed stairs keep their own travel time.
+        foreach ($steps as $step) {
+            $measure = min(1.0, max(0.0, (float) ($step['routeM'] ?? 0)));
+            if ($measure >= 1.0 && $distance > 0) {
+                $elapsed[] = $duration;
+                continue;
+            }
+
+            $target = $measure * $distance;
+            while (isset($edges[$edgeIndex])) {
+                $edge = $edges[$edgeIndex];
+                $length = (float) $edge->distance_m;
+                if ($length > 0 && $target <= $edgeStart + $length) {
+                    break;
+                }
+                $edgeStart += $length;
+                $elapsedBeforeEdge += (float) $edge->duration_s;
+                $edgeIndex++;
+            }
+
+            $elapsed[] = isset($edges[$edgeIndex])
+                ? $elapsedBeforeEdge + ($target - $edgeStart) / $length * (float) $edge->duration_s
+                : $duration;
+        }
+
+        return $elapsed;
     }
 
     private function stairStep(object $edge, array $points, float $walkedDistance, float $distance, string $lang): array

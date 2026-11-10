@@ -78,5 +78,10 @@ class SameFloorStairRouteOutputTest extends TestCase
         $this->assertSame(['lat' => $line[3][1], 'lon' => $line[3][0]], $step['endCoord']);
         $this->assertSame(0.2, $step['routeM']);
         $this->assertSame(0.8, $step['endRouteM']);
+        $this->assertSame(11.0, $route['duration_s']);
+        $this->assertSame(2.0, $step['elapsed_s']);
+        $this->assertSame(9.0, $step['end_elapsed_s']);
+        $this->assertSame(7.0, $step['duration_s']);
+        $this->assertSame(9.0, $step['span_duration_s']);
     }
 }
