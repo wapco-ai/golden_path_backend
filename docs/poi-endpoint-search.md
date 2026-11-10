@@ -11,6 +11,12 @@ Partial area matches alternate with distinct POIs while both are available.
 The area named روضه منور (1000998) has separate Persian and Arabic aliases in
 `config/area_endpoints.php`.
 
+When a same-floor POI inside a matching area shares its name or alias, the area
+represents the routing result. A POI with cultural content in the requested
+language also appears as a separate result with `kind: cultural` and its POI ID
+so the client can open its details. Duplicate points without content are
+suppressed.
+
 Apply `2026_11_10_130000_localize_place_search.php` or the matching versioned
 SQL before serving the updated application code. Roll back the application code
 before rolling back this SQL. The selected area boundary is display geometry.

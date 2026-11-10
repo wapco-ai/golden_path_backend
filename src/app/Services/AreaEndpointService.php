@@ -130,7 +130,12 @@ class AreaEndpointService
                 $partialAreas[] = $area;
             }
             foreach (json_decode($row->duplicate_poi_ids ?? '[]', true, flags: JSON_THROW_ON_ERROR) as $poiId) {
-                unset($pois[$poiId]);
+                if (isset($pois[$poiId]['content'])) {
+                    // The area is the routing result, but its POI still has information to show.
+                    $pois[$poiId]['kind'] = 'cultural';
+                } else {
+                    unset($pois[$poiId]);
+                }
             }
         }
 
