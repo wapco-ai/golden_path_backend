@@ -494,7 +494,7 @@ class CulturalItemsController extends Controller
 
 
             'poi' => [$isUpdate ? 'sometimes' : 'required_without:poi_id', 'array'],
-            'poi.floor' => ['sometimes', 'nullable', 'integer', 'in:-1,0'],
+            'poi.floor' => ['bail', 'sometimes', 'nullable', 'integer', 'between:-32768,32767', 'exists:routing_floors,floor'],
 
             'poi.category_leaf_id' => ['sometimes', 'nullable', 'integer'], // اگر ستونش را داری
 

@@ -6,6 +6,7 @@ use App\Http\Middleware\AdminAuth;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 /** Integration tests against an isolated PostgreSQL/PostGIS baseline. */
@@ -191,24 +192,31 @@ class CulturalItemTimestampTest extends TestCase
         $this->assertEquals([$prayer], $item['prayer_restrictions']);
     }
 
-    public function test_new_cultural_poi_persists_basement_floor_before_media_upload(): void
+    public static function culturalFloors(): array
     {
+        return ['basement' => [-1], 'additional configured floor' => [2]];
+    }
+
+    #[DataProvider('culturalFloors')]
+    public function test_new_cultural_poi_persists_floor_before_media_upload(int $floor): void
+    {
+        DB::table('routing_floors')->insert(['floor' => 2, 'label' => 'Second floor', 'sort_order' => 2]);
         $groupId = DB::table('categories')->insertGetId([
             'code' => $this->marker, 'property_target' => 'poi_points', 'level' => 1,
         ]);
         $item = $this->postJson('/api/v1/cultural-items', [
             'poi' => [
-                'floor' => -1,
+                'floor' => $floor,
                 'location' => ['lat' => 36.2853, 'lng' => 59.6134],
                 'grouping' => ['group_id' => $groupId],
             ],
             'translations' => ['fa' => ['title' => $this->marker, 'media' => []]],
-        ])->assertOk()->assertJsonPath('location.floor', -1)->json();
+        ])->assertOk()->assertJsonPath('location.floor', $floor)->json();
 
         $id = $item['poiId'];
-        $this->assertDatabaseHas('poi_points', ['id' => $id, 'floor' => -1]);
-        $this->assertSame(-1, $this->details($id)['location']['floor']);
-        $this->assertSame(-1, $this->listed($id)['location']['floor']);
+        $this->assertDatabaseHas('poi_points', ['id' => $id, 'floor' => $floor]);
+        $this->assertSame($floor, $this->details($id)['location']['floor']);
+        $this->assertSame($floor, $this->listed($id)['location']['floor']);
     }
 
     public function test_edit_preserves_creation_media_and_unrelated_poi_and_restriction_data(): void
