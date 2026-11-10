@@ -136,6 +136,7 @@ class AreaAdminController extends Controller
             ->selectRaw("
             a.*,
             ST_AsGeoJSON(a.geom) AS geom_geojson,
+            public.fn_area_routing_role(a.area_type, COALESCE(a.attrs, '{}'::jsonb) - 'routing_role') AS default_routing_role,
             it_title.txt AS title,
             it_desc.txt  AS description
         ")
@@ -390,6 +391,7 @@ class AreaAdminController extends Controller
                 'time_restrictions'           => 'sometimes|array',
                 'prayer_restrictions'         => 'sometimes|array',
                 'public_access'                => 'sometimes|required|boolean',
+                'routing_role'                 => 'sometimes|required|in:default,routable,doorstep_only',
 
                 'geometry'                    => 'sometimes|array',
                 'meta.area_type'              => 'sometimes|string|max:50',
@@ -456,6 +458,20 @@ class AreaAdminController extends Controller
 
         return DB::transaction(function () use ($data, $id, $derivedAllowedGender, $derivedIsClosed) {
 
+            $routingRole = $data['routing_role'] ?? null;
+            if ($routingRole !== null) {
+                // Use the same per-door lock as graph jobs, before taking the area lock.
+                DB::select('
+                    SELECT pg_advisory_xact_lock(d.door_id)
+                    FROM (
+                        SELECT DISTINCT door_id FROM public.door_access_points
+                        WHERE ? IN (from_area, to_area)
+                        ORDER BY door_id
+                    ) d
+                ', [$id]);
+                DB::select("SELECT pg_advisory_xact_lock(hashtextextended('routing-area:' || ?::text, 0))", [$id]);
+            }
+
             $currentArea = DB::table('areas')
                 ->where('id', $id)
                 ->lockForUpdate()
@@ -478,6 +494,11 @@ class AreaAdminController extends Controller
             if ($publicAccess !== null) {
                 $attrs['access_policy'] = (array) ($attrs['access_policy'] ?? []);
                 $attrs['access_policy']['public_access'] = $publicAccess;
+            }
+            if ($routingRole === 'default') {
+                unset($attrs['routing_role']);
+            } elseif ($routingRole !== null) {
+                $attrs['routing_role'] = $routingRole;
             }
 
             $sets     = [];
@@ -521,7 +542,7 @@ class AreaAdminController extends Controller
             $sets[] = 'updated_at = now()';
 
             $sql = sprintf(
-                'UPDATE areas SET %s WHERE id = ? RETURNING
+                "UPDATE areas SET %s WHERE id = ? RETURNING
                     id,
                     area_type::text AS area_type,
                     floor,
@@ -530,13 +551,29 @@ class AreaAdminController extends Controller
                     weight_open_space,
                     attrs,
                     updated_at,
-                    ST_AsGeoJSON(geom) AS geom_geojson',
+                    public.fn_area_routing_role(area_type, COALESCE(attrs, '{}'::jsonb) - 'routing_role') AS default_routing_role,
+                    ST_AsGeoJSON(geom) AS geom_geojson",
                 implode(', ', $sets)
             );
 
             $bindings[] = $id;
 
             $row = DB::selectOne($sql, $bindings);
+
+            if ($routingRole !== null) {
+                if ($row->default_routing_role === 'transparent') {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'routing_role' => 'نقش مسیریابی این نوع اتصال از تنظیمات اتصال تعیین می‌شود.',
+                    ]);
+                }
+                $graph = DB::selectOne('SELECT public.fn_sync_area_routing_graph(?::bigint) AS result', [$id]);
+                $row->area_graph = json_decode($graph->result ?? '', true);
+                if ($row->area_graph === null || $row->area_graph['status'] === 'incomplete') {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'routing_role' => 'ساخت گراف کامل نشد. اتصال ورودی‌های محدوده را بررسی کنید.',
+                    ]);
+                }
+            }
 
             if ($publicAccess !== null) {
                 $this->syncPublicAccessRestriction((int) $id, $publicAccess, $row->area_type, $attrs);
