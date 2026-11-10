@@ -201,6 +201,7 @@ Route::prefix('v1')->group(function () {
         Route::delete('/areas/{id}', [AreaAdminController::class, 'destroy']);
 
         // Doors CRUD (admin)
+        Route::get('/doors/placement-preview', [DoorCrudController::class, 'previewPlacement']);
         Route::post('/doors',        [DoorCrudController::class, 'store']);
         Route::get('/doors/{id}',    [DoorCrudController::class, 'show']);
         Route::put('/doors/{id}',    [DoorCrudController::class, 'update']);

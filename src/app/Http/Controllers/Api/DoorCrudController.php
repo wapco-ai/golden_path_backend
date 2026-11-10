@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Jobs\RebuildDoorGraphJob;
 use App\Jobs\DeleteDoorGraphJob;
 
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -15,6 +16,45 @@ use Illuminate\Support\Str;
 
 class DoorCrudController extends Controller
 {
+    public function previewPlacement(Request $request)
+    {
+        $data = $request->validate([
+            'x' => 'required|numeric',
+            'y' => 'required|numeric',
+            'floor' => 'required|integer|between:-32768,32767',
+            'door_id' => 'sometimes|integer|min:1',
+        ]);
+
+        $placement = $this->withDoorPlacementValidation(fn () => DB::selectOne(
+            'SELECT ST_AsGeoJSON(ST_Transform(p.door_geom, 4326)) AS line,
+                    ST_AsGeoJSON(ST_Transform(p.dap_geom, 4326)) AS point,
+                    ST_Length(p.door_geom) AS width_m
+             FROM public.fn_manual_door_placement(?::double precision, ?::double precision, ?::smallint, ?::boolean) AS p',
+            [$data['x'], $data['y'], $data['floor'], isset($data['door_id'])]
+        ));
+
+        return response()->json([
+            'line' => json_decode($placement->line, true, 512, JSON_THROW_ON_ERROR),
+            'point' => json_decode($placement->point, true, 512, JSON_THROW_ON_ERROR),
+            'width_m' => (float) $placement->width_m,
+        ]);
+    }
+
+    private function withDoorPlacementValidation(callable $operation): mixed
+    {
+        try {
+            return $operation();
+        } catch (QueryException $exception) {
+            if ($exception->getCode() !== 'GP001') {
+                throw $exception;
+            }
+
+            throw ValidationException::withMessages([
+                'point' => 'محل درب مشخص نیست یا فضای مستقیم کافی ندارد. نقطه را کمی دورتر از گوشه و روی یک ضلع انتخاب کنید.',
+            ]);
+        }
+    }
+
     public function storeWithInfo(Request $request)
     {
         $data = $request->validate(['point' => 'required|array', 'info' => 'required|array']);
@@ -137,7 +177,7 @@ class DoorCrudController extends Controller
             $modesPg,
             $bidirectional
         ) {
-            $row = DB::selectOne(
+            $row = $this->withDoorPlacementValidation(fn () => DB::selectOne(
                 "SELECT *
          FROM fn_create_door_from_click(
              :x, :y, :floor,
@@ -153,7 +193,7 @@ class DoorCrudController extends Controller
                     'modes'          => $modesPg,
                     'bidirectional'  => $bidirectional,
                 ]
-            );
+            ));
 
             if (!$row) {
                 throw new \RuntimeException('Door creation failed: no record returned from fn_create_door_from_click');
@@ -497,7 +537,7 @@ class DoorCrudController extends Controller
         $row = DB::transaction(function () use ($doorId, $x, $y, $floor) {
             $beforeCount = DB::table('doors')->count();
 
-            $rows = DB::select(
+            $rows = $this->withDoorPlacementValidation(fn () => DB::select(
                 "
             SELECT
                 m.door_id,
@@ -519,7 +559,7 @@ class DoorCrudController extends Controller
                     $y,
                     $floor,
                 ]
-            );
+            ));
 
             if (empty($rows)) {
                 throw new \RuntimeException('Door move failed: empty result.');
