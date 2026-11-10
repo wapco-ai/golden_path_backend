@@ -45,13 +45,12 @@ class DoorCrudController extends Controller
         try {
             return $operation();
         } catch (QueryException $exception) {
-            if ($exception->getCode() !== 'GP001') {
-                throw $exception;
-            }
-
-            throw ValidationException::withMessages([
-                'point' => 'محل درب مشخص نیست یا فضای مستقیم کافی ندارد. نقطه را کمی دورتر از گوشه و روی یک ضلع انتخاب کنید.',
-            ]);
+            $message = match ($exception->getCode()) {
+                'GP001' => 'محل درب مشخص نیست یا فضای مستقیم کافی ندارد. نقطه را کمی دورتر از گوشه و روی یک ضلع انتخاب کنید.',
+                'GP002' => 'نقطهٔ پاگرد را روی همان مرز پله و فضای دسترسی جابه‌جا کنید.',
+                default => throw $exception,
+            };
+            throw ValidationException::withMessages(['point' => $message]);
         }
     }
 
@@ -675,7 +674,7 @@ class DoorCrudController extends Controller
      *
      * خواندن اطلاعات مودال (basic_info + grouping + operational + time/prayer)
      */
-    public function getInfo($id)
+    public function getInfo(Request $request, $id)
     {
         $doorId = (int) $id;
 
@@ -856,9 +855,15 @@ class DoorCrudController extends Controller
             'notes'               => $notes,
         ];
 
-        $access = DB::selectOne('SELECT id AS access_id, floor, ST_Y(ST_Transform(geom,4326)) AS lat, ST_X(ST_Transform(geom,4326)) AS lon FROM door_access_points WHERE door_id=? ORDER BY id LIMIT 1', [$doorId]);
+        $selection = $request->validate(['access_id' => 'nullable|integer|min:1']);
+        $access = DB::selectOne('SELECT id AS access_id, floor, ST_Y(ST_Transform(geom,4326)) AS lat,
+            ST_X(ST_Transform(geom,4326)) AS lon FROM door_access_points WHERE door_id=?
+            ORDER BY (id = ?::bigint) DESC NULLS LAST, id LIMIT 1', [$doorId, $selection['access_id'] ?? null]);
         $response['point'] = $access;
         $connector = app(\App\Services\ConnectorService::class)->forDoor($doorId);
+        if (!$connector && $access) {
+            $connector = app(\App\Services\SameFloorStairService::class)->forAccessPoint((int) $access->access_id);
+        }
         if ($connector) $response = array_replace($response, $connector['info']);
         $response['connector'] = $connector;
         return response()->json($response);

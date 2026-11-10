@@ -17,6 +17,15 @@ class SameFloorStairService
         ];
     }
 
+    public function forAccessPoint(int $accessId): ?array
+    {
+        $stairs = $this->records(DB::table('same_floor_stairs')->where(function (Builder $query) use ($accessId) {
+            $query->where('start_access_id', $accessId)->orWhere('end_access_id', $accessId);
+        })->limit(2));
+
+        return count($stairs) === 1 ? $stairs[0] : null;
+    }
+
     public function candidates(array $landings): array
     {
         // The bounding boxes are a coarse filter. The graph's validator checks exact geometry.
@@ -158,7 +167,7 @@ class SameFloorStairService
 
         $accessIds = $stairs->flatMap(fn ($stair) => [$stair->start_access_id, $stair->end_access_id])->filter()->unique();
         $points = DB::table('door_access_points')->whereIn('id', $accessIds)->selectRaw(
-            'id, door_id, ST_Y(ST_Transform(geom,4326)) AS lat, ST_X(ST_Transform(geom,4326)) AS lon'
+            'id, door_id, floor, from_area, to_area, needs_review, ST_Y(ST_Transform(geom,4326)) AS lat, ST_X(ST_Transform(geom,4326)) AS lon'
         )->get()->keyBy('id');
         $areaIds = $stairs->flatMap(fn ($stair) => [$stair->start_area_id, $stair->end_area_id])->filter()->unique();
         $names = DB::table('i18n_texts')->where('entity_table', 'areas')->where('field', 'name')
@@ -170,11 +179,14 @@ class SameFloorStairService
                 $accessId = $stair->{$end.'_access_id'};
                 $areaId = $stair->{$end.'_area_id'};
                 $point = $points->get($accessId);
+                $valid = $point && (int) $point->floor === (int) $stair->floor && !$point->needs_review
+                    && in_array((int) $areaId, [(int) $point->from_area, (int) $point->to_area], true);
                 $stops[] = [
                     'floor' => $stair->floor, 'position' => $position,
                     'access_id' => $accessId, 'door_id' => $point?->door_id,
                     'area_id' => $areaId, 'area_name' => $names->get($areaId, 'محدوده '.$areaId),
                     'lat' => $point?->lat, 'lon' => $point?->lon,
+                    'error' => $valid ? null : ConnectorService::INVALID_ACCESS_MESSAGE,
                     'travel_seconds' => $stair->travel_seconds !== null ? (float) $stair->travel_seconds : null,
                     'reverse_seconds' => $position === 0 && $stair->reverse_seconds !== null ? (float) $stair->reverse_seconds : null,
                 ];
