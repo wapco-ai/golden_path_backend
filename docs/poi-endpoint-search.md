@@ -4,9 +4,12 @@
 
 For nonblank text search, POI and area names are matched in the requested
 language only. The shared `fn_place_search_key` normalizes Arabic/Persian kaf
-and yeh, marks and spacing while preserving displayed names. Area matches still
-require an exact name or a localized alias. The area named روضه منور (1000998)
-has separate Persian and Arabic aliases in `config/area_endpoints.php`.
+and yeh, marks and spacing while preserving displayed names. Destination search
+uses the existing `include_exact_areas` flag to include public areas that match
+all or part of a name or localized alias. Exact area matches appear first.
+Partial area matches alternate with distinct POIs while both are available.
+The area named روضه منور (1000998) has separate Persian and Arabic aliases in
+`config/area_endpoints.php`.
 
 Apply `2026_11_10_130000_localize_place_search.php` or the matching versioned
 SQL before serving the updated application code. Roll back the application code

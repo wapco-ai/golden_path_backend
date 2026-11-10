@@ -21,6 +21,7 @@ class AreaEndpointService
         HAVING count(*) = cardinality(g.area_ids)
         SQL;
 
+    // The existing include_exact_areas option now includes partial matches too.
     public function includeExactMatches(array $places, string $search, string $language, int $limit): array
     {
         $publicGroups = self::PUBLIC_GROUPS_SQL;
@@ -42,7 +43,7 @@ class AreaEndpointService
                 FROM ($publicGroups) g
                 LEFT JOIN area_names ON area_names.entity_id = g.area_ids[1]
             ), candidates AS (
-                SELECT 'area' AS kind, a.id, NULL::text AS group_id, a.floor, a.geom,
+                SELECT a.id, NULL::text AS group_id, a.floor, a.geom,
                     COALESCE(area_names.txt, input.aliases -> a.id::text ->> 0) AS title,
                     input.aliases -> a.id::text AS aliases
                 FROM areas a CROSS JOIN input
@@ -50,28 +51,32 @@ class AreaEndpointService
                 WHERE (a.attrs #>> '{access_policy,public_access}') IS DISTINCT FROM 'false'
                   AND NOT EXISTS (SELECT 1 FROM groups g WHERE a.id = ANY(g.area_ids))
                 UNION ALL
-                SELECT 'area', NULL::bigint, g.id, g.floor, g.geom, g.title, NULL::jsonb FROM groups g
-                UNION ALL
-                SELECT 'poi', p.id, NULL::text, p.floor, p.geom, i.txt, NULL::jsonb
+                SELECT NULL::bigint, g.id, g.floor, g.geom, g.title, NULL::jsonb FROM groups g
+            ), pois AS (
+                SELECT p.id, p.floor, p.geom, public.fn_place_search_key(i.txt) AS title_key
                 FROM input CROSS JOIN LATERAL jsonb_array_elements_text(input.poi_ids) AS ids(id)
                 JOIN poi_points p ON p.id = ids.id::bigint
                 JOIN i18n_texts i ON i.entity_table = 'poi_points' AND i.entity_id = p.id
                     AND i.field = 'name' AND i.lang = input.lang
-            ), matches AS (
-                SELECT c.*
-                FROM candidates c CROSS JOIN input
-                WHERE public.fn_place_search_key(c.title) = input.search
-                   OR EXISTS (
-                       SELECT 1 FROM jsonb_array_elements_text(c.aliases) AS alias(name)
-                       WHERE public.fn_place_search_key(alias.name) = input.search
-                   )
+            ), area_keys AS (
+                SELECT c.*, public.fn_place_search_key(c.title) AS title_key,
+                    ARRAY(SELECT public.fn_place_search_key(alias.name)
+                          FROM jsonb_array_elements_text(c.aliases) AS alias(name)) AS alias_keys
+                FROM candidates c
             ), eligible_areas AS (
-                SELECT * FROM matches WHERE kind = 'area' AND ST_Area(geom) >= ?
+                SELECT a.*, a.title_key = input.search OR input.search = ANY(a.alias_keys) AS exact_match
+                FROM area_keys a CROSS JOIN input
+                WHERE (strpos(a.title_key, input.search) > 0
+                   OR EXISTS (
+                       SELECT 1 FROM unnest(a.alias_keys) AS alias(name)
+                       WHERE strpos(alias.name, input.search) > 0
+                   )) AND ST_Area(a.geom) >= ?
             )
-            SELECT a.id, a.group_id, a.floor, a.title, ST_Y(point.geom) AS lat, ST_X(point.geom) AS lon,
+            SELECT a.id, a.group_id, a.floor, a.title, a.exact_match, ST_Y(point.geom) AS lat, ST_X(point.geom) AS lon,
                 to_jsonb(g.area_ids) AS member_area_ids,
-                (SELECT jsonb_agg(p.id::text) FROM matches p
-                 WHERE p.kind = 'poi' AND p.floor = a.floor AND ST_Covers(a.geom, p.geom)) AS duplicate_poi_ids
+                (SELECT jsonb_agg(p.id::text) FROM pois p
+                 WHERE p.floor = a.floor AND (p.title_key = a.title_key OR p.title_key = ANY(a.alias_keys))
+                   AND ST_Covers(a.geom, p.geom)) AS duplicate_poi_ids
             FROM eligible_areas a
             LEFT JOIN groups g ON g.id = a.group_id
             CROSS JOIN LATERAL (SELECT ST_Transform(ST_PointOnSurface(a.geom), 4326) AS geom) point
@@ -80,8 +85,11 @@ class AreaEndpointService
                 FROM eligible_areas matched_group
                 JOIN groups configured_group ON configured_group.id = matched_group.group_id
                 WHERE a.id = ANY(configured_group.search_excluded_area_ids)
+                  AND a.title_key = matched_group.title_key
             )
-            ORDER BY a.floor, a.id, a.group_id
+            ORDER BY a.exact_match DESC NULLS LAST,
+                starts_with(a.title_key, (SELECT search FROM input)) DESC NULLS LAST,
+                a.floor, a.id, a.group_id
             LIMIT ?
             SQL, [
                 $search, $language, json_encode(array_column($places, 'id'), JSON_THROW_ON_ERROR),
@@ -90,9 +98,18 @@ class AreaEndpointService
                 self::MIN_PICKER_AREA_M2, $limit,
             ]);
 
-        $areas = [];
-        $duplicatePoiIds = [];
-        foreach ($rows as $row) {
+        $exactAreas = [];
+        $partialAreas = [];
+        $pois = array_column($places, null, 'id');
+        $exactCount = count(array_filter($rows, fn ($row) => $row->exact_match));
+        $areaSlots = $exactCount + intdiv($limit - $exactCount + 1, 2);
+        foreach ($rows as $index => $row) {
+            // Reserve roughly half the open slots for partial areas. Add more only
+            // when there are too few distinct points to fill the response.
+            if ($index >= $areaSlots && $index + count($pois) >= $limit) {
+                break;
+            }
+
             $identity = $row->group_id !== null
                 ? [
                     'id' => "area-group-{$row->group_id}",
@@ -100,22 +117,34 @@ class AreaEndpointService
                     'memberAreaIds' => json_decode($row->member_area_ids, true, flags: JSON_THROW_ON_ERROR),
                 ]
                 : ['id' => "area-{$row->id}", 'areaId' => (int) $row->id];
-            $areas[] = [
+            $area = [
                 ...$identity,
                 'kind' => 'area',
                 'title' => $row->title,
                 'floor' => (int) $row->floor,
                 'coordinates' => [(float) $row->lat, (float) $row->lon],
             ];
+            if ($row->exact_match) {
+                $exactAreas[] = $area;
+            } else {
+                $partialAreas[] = $area;
+            }
             foreach (json_decode($row->duplicate_poi_ids ?? '[]', true, flags: JSON_THROW_ON_ERROR) as $poiId) {
-                $duplicatePoiIds[$poiId] = true;
+                unset($pois[$poiId]);
             }
         }
 
-        // An exact POI match inside the matched area on the same floor is the same search choice.
-        $pois = array_filter($places, fn (array $place) => !isset($duplicatePoiIds[$place['id']]));
+        $pois = array_values($pois);
+        // Interleave partial areas with points so a broad match can surface both.
+        $results = $exactAreas;
+        foreach ($partialAreas as $index => $area) {
+            $results[] = $area;
+            if (isset($pois[$index])) {
+                $results[] = $pois[$index];
+            }
+        }
 
-        return array_slice([...$areas, ...$pois], 0, $limit);
+        return array_slice([...$results, ...array_slice($pois, count($partialAreas))], 0, $limit);
     }
 
     public function doors(?int $areaId, string $language, ?int $floor, ?string $areaGroupId = null): ?string
