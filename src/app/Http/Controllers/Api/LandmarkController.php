@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Services\AreaEndpointService;
+use App\Services\CulturalMapGroup;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -65,6 +66,8 @@ class LandmarkController extends Controller
                 ];
             }
 
+            $payload['places']['landmarkPlaces'] = $this->applyAssignedMainGroups($payload['places']['landmarkPlaces'] ?? []);
+
             if (($data['include_exact_areas'] ?? false) && !$featured && $poiId === null && trim((string) $search) !== '') {
                 $payload['places']['landmarkPlaces'] = $areaEndpoints->includeExactMatches(
                     $payload['places']['landmarkPlaces'] ?? [],
@@ -90,6 +93,22 @@ class LandmarkController extends Controller
                 'message' => 'مشکلی در تولید داده‌های Landmark رخ داد.',
             ], 500);
         }
+    }
+
+    private function applyAssignedMainGroups(array $places): array
+    {
+        $groups = CulturalMapGroup::codesByPointId(array_column($places, 'id'));
+
+        foreach ($places as $index => $place) {
+            $group = $groups->get($place['id']);
+            if ($group !== null) {
+                $places[$index]['group'] = $group;
+                $places[$index]['subGroup'] = null;
+                $places[$index]['subGroupValue'] = 'poi-'.$place['id'];
+            }
+        }
+
+        return $places;
     }
 
     /**
