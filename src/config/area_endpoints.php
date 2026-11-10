@@ -1,6 +1,10 @@
 <?php
 
 return [
+    'search_aliases' => [
+        'fa' => [1000998 => ['روضه منوره']],
+        'ar' => [1000998 => ['روضة منورة', 'الروضة المنورة']],
+    ],
     'groups' => [
         'imam-khomeini-riwaq' => [
             'floor' => 0,

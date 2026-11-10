@@ -26,7 +26,7 @@ class PoiEndpointSearchTest extends TestCase
 
     private function migration(): object
     {
-        return require base_path('database/migrations/2026_09_18_160000_enable_all_poi_endpoint_search.php');
+        return require base_path('database/migrations/2026_11_10_130000_localize_place_search.php');
     }
 
     private function poi(int $floor, string $name, bool $hasContent = false): int
@@ -94,32 +94,60 @@ class PoiEndpointSearchTest extends TestCase
         }
     }
 
-    public function test_search_keeps_limits_language_fallback_and_real_poi_identity(): void
+    public function test_search_uses_only_the_selected_language_and_keeps_limits_and_identity(): void
     {
-        $first = $this->poi(-1, 'آزمون محدودیت');
-        $this->poi(0, 'آزمون محدودیت');
-        $places = $this->places(['search' => 'آزمون محدودیت', 'language' => 'en', 'limit' => 1]);
+        $first = $this->poi(-1, 'آزمون کوی');
+        $this->poi(0, 'آزمون کوی');
+        DB::table('i18n_texts')->insert([
+            'entity_table' => 'poi_points', 'entity_id' => $first,
+            'field' => 'name', 'lang' => 'en', 'txt' => 'English Search Fixture',
+        ]);
+        $places = $this->places(['search' => 'آزمون  كُوى', 'limit' => 1]);
         $this->assertCount(1, $places);
         $this->assertSame((string) $first, $places[0]['id']);
         $this->assertSame(-1, $places[0]['floor']);
-        $this->assertSame('آزمون محدودیت', $places[0]['title']);
+        $this->assertSame('آزمون کوی', $places[0]['title']);
+        $this->assertSame([], $this->places(['search' => 'آزمون کوی', 'language' => 'en']));
+        $this->assertSame([], $this->places(['search' => 'English Search Fixture']));
+        $this->assertSame('English Search Fixture', $this->places([
+            'search' => 'english search fixture', 'language' => 'en',
+        ])[0]['title']);
+        $this->assertSame([], $this->places(['search' => '%']));
         $this->assertSame([], $this->places(['search' => "no-match' OR true --"]));
     }
 
     public function test_rollback_and_reapply_preserve_poi_data_and_floor_metadata(): void
     {
         $id = $this->poi(-1, 'آزمون بازگشت');
-        $query = ['search' => 'آزمون بازگشت'];
-        $this->assertCount(1, $this->places($query));
-        $this->migration()->down();
+        $query = ['search' => 'آزمون بازگشت', 'language' => 'en'];
         $this->assertSame([], $this->places($query));
+        $this->migration()->down();
+        $this->assertSame((string) $id, $this->places($query)[0]['id']);
         $this->assertSame(-1, (int) DB::table('poi_points')->where('id', $id)->value('floor'));
         $this->migration()->up();
         $this->migration()->up();
-        $places = $this->places($query);
-        $this->assertCount(1, $places);
+        $this->assertSame([], $this->places($query));
+        $places = $this->places([...$query, 'language' => 'fa']);
         $this->assertSame((string) $id, $places[0]['id']);
         $this->assertSame(-1, $places[0]['floor']);
+    }
+
+    public function test_area_aliases_respect_language_and_keep_the_area_identity(): void
+    {
+        $area = $this->area('روضه آزمون', 0, 500000, 500040);
+        $this->poi(0, 'روضه آزمونی');
+        config(['area_endpoints.search_aliases' => [
+            'fa' => [$area => ['روضه آزمونی']],
+            'ar' => [$area => ['روضة الاختبار']],
+        ]]);
+
+        $query = ['search' => 'روضه آزموني', 'include_exact_areas' => 1];
+        $this->assertSame(["area-{$area}"], array_column($this->places($query), 'id'));
+        $this->assertSame([], $this->places([...$query, 'language' => 'ar']));
+        $this->assertSame([], $this->places([...$query, 'search' => 'روضة الاختبار']));
+        $places = $this->places([...$query, 'search' => 'روضة الاختبار', 'language' => 'ar']);
+        $this->assertSame(["area-{$area}"], array_column($places, 'id'));
+        $this->assertSame('روضة الاختبار', $places[0]['title']);
     }
 
     public function test_destination_search_adds_only_exact_public_area_results_on_their_own_floors(): void

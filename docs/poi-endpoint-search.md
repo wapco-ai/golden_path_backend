@@ -1,13 +1,25 @@
 # POI endpoint search
 
+## Localized text search
+
+For nonblank text search, POI and area names are matched in the requested
+language only. The shared `fn_place_search_key` normalizes Arabic/Persian kaf
+and yeh, marks and spacing while preserving displayed names. Area matches still
+require an exact name or a localized alias. The area named روضه منور (1000998)
+has separate Persian and Arabic aliases in `config/area_endpoints.php`.
+
+Apply `2026_11_10_130000_localize_place_search.php` or the matching versioned
+SQL before serving the updated application code. Roll back the application code
+before rolling back this SQL. The selected area boundary is display geometry.
+Entry selection still uses coordinates from `door_access_points`.
+
 ## Contract
 
 The existing public `GET /api/v1/landmark-places?language=fa&search=...&limit=30`
 request used by MPR origin/destination and MPB text search now searches all
 matching `poi_points`, across all floors. A nonblank `search` with
 `featured=false` (the default) does not require `has_content`, a `contents` row,
-an image, or a category assignment. Matching remains the existing localized POI
-name match, with the existing Persian fallback, distance ordering and limit.
+an image, or a category assignment. Search retains distance ordering and limit.
 Filtering is performed before the result limit, not on a preloaded landmark list.
 
 The response shape stays unchanged (`places.landmarkPlaces`, string POI `id`,
@@ -46,8 +58,7 @@ Merging source on GitHub does not execute SQL against a local or production DB.
 ## Verification
 
 `vendor/bin/phpunit -c phpunit.integration.xml` runs `PoiEndpointSearchTest` in the
-already-existing CI integration database. It applies the actual deployment
-migration inside each test transaction and covers contentless/imageless and
-uncategorized POIs with identical names/XY on floors -1/0/1, unchanged blank and
-featured discovery, language fallback, limits, no-match input, and rollback/reapply.
+CI integration database. It applies the deployment migration inside each test
+transaction and covers POIs across floors, blank and featured discovery, language
+isolation, normalized matches, area aliases, limits, and rollback/reapply.
 No new database infrastructure is introduced.

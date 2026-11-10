@@ -31,33 +31,40 @@ class AreaEndpointService
 
         $rows = DB::select(<<<SQL
             WITH input AS (
-                SELECT ?::text AS search, ?::lang_enum AS lang, ?::jsonb AS poi_ids, ?::jsonb AS groups
+                SELECT NULLIF(public.fn_place_search_key(?::text), '') AS search,
+                    ?::lang_enum AS lang, ?::jsonb AS poi_ids, ?::jsonb AS groups, ?::jsonb AS aliases
             ), area_names AS (
-                SELECT DISTINCT ON (i.entity_id) i.entity_id, i.txt
+                SELECT i.entity_id, i.txt
                 FROM i18n_texts i CROSS JOIN input
-                WHERE i.entity_table = 'areas' AND i.field = 'name'
-                ORDER BY i.entity_id, (i.lang = input.lang) DESC, (i.lang = 'fa') DESC, i.lang
+                WHERE i.entity_table = 'areas' AND i.field = 'name' AND i.lang = input.lang
             ), groups AS (
                 SELECT g.*, area_names.txt AS title
                 FROM ($publicGroups) g
-                JOIN area_names ON area_names.entity_id = g.area_ids[1]
+                LEFT JOIN area_names ON area_names.entity_id = g.area_ids[1]
             ), candidates AS (
-                SELECT 'area' AS kind, a.id, NULL::text AS group_id, a.floor, a.geom, area_names.txt AS title
-                FROM area_names JOIN areas a ON a.id = area_names.entity_id
+                SELECT 'area' AS kind, a.id, NULL::text AS group_id, a.floor, a.geom,
+                    COALESCE(area_names.txt, input.aliases -> a.id::text ->> 0) AS title,
+                    input.aliases -> a.id::text AS aliases
+                FROM areas a CROSS JOIN input
+                LEFT JOIN area_names ON area_names.entity_id = a.id
                 WHERE (a.attrs #>> '{access_policy,public_access}') IS DISTINCT FROM 'false'
                   AND NOT EXISTS (SELECT 1 FROM groups g WHERE a.id = ANY(g.area_ids))
                 UNION ALL
-                SELECT 'area', NULL::bigint, g.id, g.floor, g.geom, g.title FROM groups g
+                SELECT 'area', NULL::bigint, g.id, g.floor, g.geom, g.title, NULL::jsonb FROM groups g
                 UNION ALL
-                SELECT 'poi', p.id, NULL::text, p.floor, p.geom,
-                    fn_i18n_label('poi_points', p.id, 'name', input.lang, 'fa')
+                SELECT 'poi', p.id, NULL::text, p.floor, p.geom, i.txt, NULL::jsonb
                 FROM input CROSS JOIN LATERAL jsonb_array_elements_text(input.poi_ids) AS ids(id)
                 JOIN poi_points p ON p.id = ids.id::bigint
+                JOIN i18n_texts i ON i.entity_table = 'poi_points' AND i.entity_id = p.id
+                    AND i.field = 'name' AND i.lang = input.lang
             ), matches AS (
                 SELECT c.*
                 FROM candidates c CROSS JOIN input
-                WHERE lower(btrim(regexp_replace(translate(c.title, 'يىك‌‍ ', 'ییک   '), '[[:space:]]+', ' ', 'g')))
-                    = NULLIF(lower(btrim(regexp_replace(translate(input.search, 'يىك‌‍ ', 'ییک   '), '[[:space:]]+', ' ', 'g'))), '')
+                WHERE public.fn_place_search_key(c.title) = input.search
+                   OR EXISTS (
+                       SELECT 1 FROM jsonb_array_elements_text(c.aliases) AS alias(name)
+                       WHERE public.fn_place_search_key(alias.name) = input.search
+                   )
             ), eligible_areas AS (
                 SELECT * FROM matches WHERE kind = 'area' AND ST_Area(geom) >= ?
             )
@@ -79,6 +86,7 @@ class AreaEndpointService
             SQL, [
                 $search, $language, json_encode(array_column($places, 'id'), JSON_THROW_ON_ERROR),
                 json_encode($groups, JSON_THROW_ON_ERROR),
+                json_encode(config("area_endpoints.search_aliases.{$language}", []), JSON_THROW_ON_ERROR),
                 self::MIN_PICKER_AREA_M2, $limit,
             ]);
 
@@ -104,7 +112,7 @@ class AreaEndpointService
             }
         }
 
-        // A same-named POI inside the area on the same floor represents the same search choice.
+        // An exact POI match inside the matched area on the same floor is the same search choice.
         $pois = array_filter($places, fn (array $place) => !isset($duplicatePoiIds[$place['id']]));
 
         return array_slice([...$areas, ...$pois], 0, $limit);
