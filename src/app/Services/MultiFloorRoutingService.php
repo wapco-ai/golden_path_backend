@@ -13,12 +13,21 @@ class MultiFloorRoutingService
                 ST_Transform(ST_SetSRID(ST_MakePoint(?::float8,?::float8),4326),32640),
                 ST_Transform(ST_SetSRID(ST_MakePoint(?::float8,?::float8),4326),32640)';
             $bindings = [$gender, $mode, $originFloor, $destinationFloor, $origin['lon'], $origin['lat'], $destination['lon'], $destination['lat']];
+            $originNode = $origin['node'] ?? null;
+            $destinationNode = $destination['node'] ?? null;
+            $explicitDoor = $originNode !== null || $destinationNode !== null;
+            $allowNearbyDestination = $allowNearbyDestination && !$explicitDoor;
             $privateOrigin = $allowNearbyDestination && DB::scalar("SELECT EXISTS (
                 SELECT 1 FROM areas a WHERE a.floor=?::smallint
                     AND a.attrs #>> '{access_policy,public_access}'='false'
                     AND ST_Contains(a.geom, ST_Transform(ST_SetSRID(ST_MakePoint(?::float8,?::float8),4326),32640))
             )", [$originFloor, $origin['lon'], $origin['lat']]);
-            $rows = $privateOrigin ? [] : $this->selectEdges("fn_route_multifloor_edges($endpointArguments, ?::int)", [...$bindings, $alternatives + 1]);
+            $exactArguments = $explicitDoor ? "$endpointArguments, ?::int, ?::bigint, ?::bigint" : "$endpointArguments, ?::int";
+            $exactBindings = [...$bindings, $alternatives + 1];
+            if ($explicitDoor) {
+                array_push($exactBindings, $originNode, $destinationNode);
+            }
+            $rows = $privateOrigin ? [] : $this->selectEdges("fn_route_multifloor_edges($exactArguments)", $exactBindings);
             if (!$rows && $allowNearbyDestination) {
                 $nearbyRows = $privateOrigin ? [] : $this->selectEdges("fn_route_nearby_edges($endpointArguments)", $bindings);
                 $nearbyOrigin = !$nearbyRows;

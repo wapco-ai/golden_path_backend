@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Services\DoorRouteEndpointService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -10,7 +11,7 @@ use Throwable;
 
 class RoutingController extends Controller
 {
-    public function route(Request $request)
+    public function route(Request $request, DoorRouteEndpointService $doorEndpoints)
     {
         $t0 = microtime(true);
 
@@ -55,6 +56,8 @@ class RoutingController extends Controller
                 'origin.lat'   => 'nullable|numeric',
                 'origin.lon'   => 'nullable|numeric',
                 'origin.floor' => 'nullable|integer',
+                'origin.accessId' => 'required_if:origin.type,door|integer|min:1',
+                'origin.areaId' => 'required_if:origin.type,door|integer|min:1',
 
                 'destination.type'  => 'required|string|in:coordinate,poi,door,area,qrcode',
                 'destination.id'    => 'nullable|integer',
@@ -63,6 +66,8 @@ class RoutingController extends Controller
                 'destination.lat'   => 'nullable|numeric',
                 'destination.lon'   => 'nullable|numeric',
                 'destination.floor' => 'nullable|integer',
+                'destination.accessId' => 'required_if:destination.type,door|integer|min:1',
+                'destination.areaId' => 'required_if:destination.type,door|integer|min:1',
             ]);
 
             $mode   = $data['mode'];
@@ -88,6 +93,8 @@ class RoutingController extends Controller
                 'origin' => [
                     'type'  => $o['type'] ?? null,
                     'id'    => $o['id'] ?? null,
+                    'accessId' => $o['accessId'] ?? null,
+                    'areaId' => $o['areaId'] ?? null,
                     'code'  => $o['code'] ?? null,
                     'name'  => $o['name'] ?? null,
                     'lat'   => $o['lat'] ?? null,
@@ -97,6 +104,8 @@ class RoutingController extends Controller
                 'destination' => [
                     'type'  => $d['type'] ?? null,
                     'id'    => $d['id'] ?? null,
+                    'accessId' => $d['accessId'] ?? null,
+                    'areaId' => $d['areaId'] ?? null,
                     'code'  => $d['code'] ?? null,
                     'name'  => $d['name'] ?? null,
                     'lat'   => $d['lat'] ?? null,
@@ -105,38 +114,18 @@ class RoutingController extends Controller
                 ],
             ];
 
-            // 2) محدودیت فعلی شما: فقط coordinate
-            if (($o['type'] ?? null) !== 'coordinate' || ($d['type'] ?? null) !== 'coordinate') {
-                $log['ok'] = false;
-                $log['meta']['status']    = 'UNSUPPORTED';
-                $log['meta']['http_code'] = 422;
-
-                $this->insertRouteLogSafe($log, $t0);
-
-                return response()->json([
-                    'ok'      => false,
-                    'message' => 'در نسخهٔ فعلی، مسیریابی جدید فقط برای origin/destination از نوع coordinate فعال است.',
-                ], 422);
+            $points = ['origin' => $o, 'destination' => $d];
+            foreach ($points as $side => $point) {
+                if (!in_array($point['type'], ['coordinate', 'door'], true)) {
+                    throw ValidationException::withMessages([$side => 'Choose a coordinate or a door.']);
+                }
+                if ($point['type'] === 'coordinate' && (empty($point['lat']) || empty($point['lon']))) {
+                    throw ValidationException::withMessages([$side => 'Coordinates are required.']);
+                }
+                if ($point['type'] === 'door' && !isset($point['floor'])) {
+                    throw ValidationException::withMessages([$side => 'A door requires a floor.']);
+                }
             }
-
-            if (empty($o['lat']) || empty($o['lon']) || empty($d['lat']) || empty($d['lon'])) {
-                $log['ok'] = false;
-                $log['meta']['status']    = 'VALIDATION';
-                $log['meta']['http_code'] = 422;
-                $log['meta']['error']     = 'MISSING_LAT_LON';
-
-                $this->insertRouteLogSafe($log, $t0);
-
-                return response()->json([
-                    'ok'      => false,
-                    'message' => 'برای type=coordinate باید lat/lon مبدا و مقصد ارسال شود.',
-                ], 422);
-            }
-
-            $originLat = (float)$o['lat'];
-            $originLon = (float)$o['lon'];
-            $destLat   = (float)$d['lat'];
-            $destLon   = (float)$d['lon'];
 
             $originFloor = (int) ($o['floor'] ?? $floor);
             $destinationFloor = (int) ($d['floor'] ?? $floor);
@@ -146,9 +135,27 @@ class RoutingController extends Controller
             }
             $log['meta']['origin_floor'] = $originFloor;
             $log['meta']['destination_floor'] = $destinationFloor;
+            $resolved = [];
+            foreach ($points as $side => $point) {
+                if ($point['type'] === 'coordinate') {
+                    $resolved[$side] = ['lat' => (float) $point['lat'], 'lon' => (float) $point['lon']];
+                    continue;
+                }
+                $endpoint = $doorEndpoints->resolve($point, $side === 'origin' ? $originFloor : $destinationFloor, $mode, $gender, $lang);
+                if (isset($endpoint['reason'])) {
+                    $log['meta']['status'] = 'DOOR_UNAVAILABLE';
+                    $log['meta']['http_code'] = 409;
+                    $this->insertRouteLogSafe($log, $t0);
+                    return response()->json(['ok' => false, 'status' => 'DOOR_UNAVAILABLE', 'endpoint' => $side, ...$endpoint], 409);
+                }
+                $resolved[$side] = $endpoint;
+            }
+
+            ['lat' => $originLat, 'lon' => $originLon] = $resolved['origin'];
+            ['lat' => $destLat, 'lon' => $destLon] = $resolved['destination'];
             $result = app(\App\Services\MultiFloorRoutingService::class)->route(
                 $gender, $mode, $originFloor, $destinationFloor,
-                ['lat' => $originLat, 'lon' => $originLon], ['lat' => $destLat, 'lon' => $destLon],
+                $resolved['origin'], $resolved['destination'],
                 $lang, (int) $maxAlts, $request->boolean('allowNearbyDestination'), $d['name'] ?? null
             );
 
@@ -189,11 +196,13 @@ class RoutingController extends Controller
                         'name' => $o['name'] ?? null,
                         'coordinates' => [$originLat, $originLon],
                         'floor' => $originFloor,
+                        ...($o['type'] === 'door' ? ['door' => ['accessId' => (int) $o['accessId'], 'selectedAreaId' => (int) $o['areaId']]] : []),
                     ],
                     'destination' => [
                         'name' => $d['name'] ?? null,
                         'coordinates' => [$destLat, $destLon],
                         'floor' => $destinationFloor,
+                        ...($d['type'] === 'door' ? ['door' => ['accessId' => (int) $d['accessId'], 'selectedAreaId' => (int) $d['areaId']]] : []),
                     ],
                     'capture_version' => 1,
                 ];
@@ -256,6 +265,8 @@ class RoutingController extends Controller
                     'type' => data_get($meta, 'request.origin.type'),
                     'id'   => data_get($meta, 'request.origin.id'),
                     'code' => data_get($meta, 'request.origin.code'),
+                    'accessId' => data_get($meta, 'request.origin.accessId'),
+                    'areaId' => data_get($meta, 'request.origin.areaId'),
                     'lat'  => data_get($meta, 'request.origin.lat'),
                     'lon'  => data_get($meta, 'request.origin.lon'),
                 ],
@@ -263,6 +274,8 @@ class RoutingController extends Controller
                     'type' => data_get($meta, 'request.destination.type'),
                     'id'   => data_get($meta, 'request.destination.id'),
                     'code' => data_get($meta, 'request.destination.code'),
+                    'accessId' => data_get($meta, 'request.destination.accessId'),
+                    'areaId' => data_get($meta, 'request.destination.areaId'),
                     'lat'  => data_get($meta, 'request.destination.lat'),
                     'lon'  => data_get($meta, 'request.destination.lon'),
                 ],

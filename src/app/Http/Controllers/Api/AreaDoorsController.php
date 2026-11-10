@@ -4,12 +4,13 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Services\AreaEndpointService;
+use App\Services\DoorRouteEndpointService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class AreaDoorsController extends Controller
 {
-    public function byPoint(Request $request, AreaEndpointService $areaEndpoints)
+    public function byPoint(Request $request, AreaEndpointService $areaEndpoints, DoorRouteEndpointService $doorEndpoints)
     {
         // 1) اعتبارسنجی ورودی
         $data = $request->validate([
@@ -18,6 +19,8 @@ class AreaDoorsController extends Controller
             'lat'     => 'required_without_all:area_id,area_group_id|nullable|numeric',
             'lon'     => 'required_without_all:area_id,area_group_id|nullable|numeric',
             'floor'   => 'required_without_all:area_id,area_group_id|nullable|integer|min:-32768|max:32767',
+            'mode'    => 'nullable|in:walk,wheelchair,van',
+            'gender'  => 'nullable|in:male,female,both',
             'lang'    => 'nullable|string|in:fa,en,ar,ur',
         ]);
 
@@ -76,6 +79,21 @@ class AreaDoorsController extends Controller
                     'area' => $area,  // برای اینکه فرانت بتواند اگر خواست، خود محدوده را نمایش دهد
                 ],
             ], 400);
+        }
+
+        if (!empty($payload['doors'])) {
+            $ids = array_map('intval', $area['memberAreaIds'] ?? [$area['id']]);
+            $statuses = collect($doorEndpoints->forAreas($ids, (int) $area['floor'], $data['mode'] ?? 'walk', $data['gender'] ?? 'both', $lang))
+                ->keyBy(fn ($row) => $row->access_id.':'.$row->area_id);
+            foreach ($payload['doors'] as &$door) {
+                $fromArea = (int) ($door['fromAreaId'] ?? 0);
+                $toArea = (int) ($door['toAreaId'] ?? 0);
+                $selectedArea = in_array($fromArea, $ids, true) ? $fromArea : $toArea;
+                $status = $statuses->get($door['accessId'].':'.$selectedArea);
+                $door['selectedAreaId'] = $selectedArea;
+                $door['routingStatus'] = $status?->status ?? 'unavailable';
+            }
+            unset($door);
         }
 
         // 5) خروجی نهایی OK
