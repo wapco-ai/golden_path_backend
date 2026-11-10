@@ -13,12 +13,18 @@ BEGIN
         ('p_k integer DEFAULT 1)', 'p_k integer, p_origin_node bigint, p_dest_node bigint)'),
         ('IF origin_area IS NULL OR dest_area IS NULL THEN RETURN; END IF;',
          $sql$IF p_origin_node IS NOT NULL THEN
-    SELECT n.area_id,n.geom INTO origin_area,p_origin
-    FROM public.routing_nodes n WHERE n.id=p_origin_node AND n.floor=p_origin_floor AND n.ref_table='door_access_points';
+    SELECT n.area_id,dap.geom INTO origin_area,p_origin
+    FROM public.routing_nodes n
+    JOIN public.door_access_points dap ON dap.id=n.ref_id AND dap.floor=n.floor
+      AND n.area_id IN (dap.from_area,dap.to_area) AND dap.needs_review IS NOT TRUE
+    WHERE n.id=p_origin_node AND n.floor=p_origin_floor AND n.ref_table='door_access_points';
   END IF;
   IF p_dest_node IS NOT NULL THEN
-    SELECT n.area_id,n.geom INTO dest_area,p_dest
-    FROM public.routing_nodes n WHERE n.id=p_dest_node AND n.floor=p_dest_floor AND n.ref_table='door_access_points';
+    SELECT n.area_id,dap.geom INTO dest_area,p_dest
+    FROM public.routing_nodes n
+    JOIN public.door_access_points dap ON dap.id=n.ref_id AND dap.floor=n.floor
+      AND n.area_id IN (dap.from_area,dap.to_area) AND dap.needs_review IS NOT TRUE
+    WHERE n.id=p_dest_node AND n.floor=p_dest_floor AND n.ref_table='door_access_points';
   END IF;
   IF origin_area IS NULL OR dest_area IS NULL THEN RETURN; END IF;$sql$),
         ($sql$) g WHERE n.floor=p_origin_floor AND n.area_id=origin_area AND n.ref_table='door_access_points'$sql$,
@@ -28,12 +34,20 @@ BEGIN
         ('IF p_origin_floor=p_dest_floor AND origin_area=dest_area THEN',
          $sql$-- Attach the selected node only when it has a legal outgoing/incoming edge.
   INSERT INTO mf_edges(source,target,cost,reverse_cost,floor_a,floor_b,geom,a,b,duration,reverse_duration,distance)
-  SELECT -1,p_origin_node,0.01,-1,p_origin_floor,p_origin_floor,ST_MakeLine(p_origin,p_origin),p_origin,p_origin,0,0,0
-  WHERE EXISTS (SELECT 1 FROM mf_edges e WHERE (e.source=p_origin_node AND e.cost>0) OR (e.target=p_origin_node AND e.reverse_cost>0));
+  SELECT -1,n.id,GREATEST(ST_Length(g.geom)/speed,0.01),-1,p_origin_floor,p_origin_floor,
+    g.geom,p_origin,n.geom,ST_Length(g.geom)/speed,ST_Length(g.geom)/speed,ST_Length(g.geom)
+  FROM routing_nodes n CROSS JOIN LATERAL (SELECT ST_MakeLine(p_origin,n.geom) AS geom) g
+  WHERE n.id=p_origin_node
+    AND (ST_OrderingEquals(n.geom,p_origin) OR fn_route_line_valid_inside_area(origin_area,g.geom,0.20))
+    AND EXISTS (SELECT 1 FROM mf_edges e WHERE (e.source=n.id AND e.cost>0) OR (e.target=n.id AND e.reverse_cost>0));
 
   INSERT INTO mf_edges(source,target,cost,reverse_cost,floor_a,floor_b,geom,a,b,duration,reverse_duration,distance)
-  SELECT p_dest_node,-2,0.01,-1,p_dest_floor,p_dest_floor,ST_MakeLine(p_dest,p_dest),p_dest,p_dest,0,0,0
-  WHERE EXISTS (SELECT 1 FROM mf_edges e WHERE (e.target=p_dest_node AND e.cost>0) OR (e.source=p_dest_node AND e.reverse_cost>0));
+  SELECT n.id,-2,GREATEST(ST_Length(g.geom)/speed,0.01),-1,p_dest_floor,p_dest_floor,
+    g.geom,n.geom,p_dest,ST_Length(g.geom)/speed,ST_Length(g.geom)/speed,ST_Length(g.geom)
+  FROM routing_nodes n CROSS JOIN LATERAL (SELECT ST_MakeLine(n.geom,p_dest) AS geom) g
+  WHERE n.id=p_dest_node
+    AND (ST_OrderingEquals(n.geom,p_dest) OR fn_route_line_valid_inside_area(dest_area,g.geom,0.20))
+    AND EXISTS (SELECT 1 FROM mf_edges e WHERE (e.target=n.id AND e.cost>0) OR (e.source=n.id AND e.reverse_cost>0));
 
   IF p_origin_node IS NULL AND p_dest_node IS NULL AND p_origin_floor=p_dest_floor AND origin_area=dest_area THEN$sql$)
     ) AS edits(original,replacement)

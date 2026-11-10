@@ -25,10 +25,12 @@ class ExplicitDoorRouteTest extends TestCase
                 SELECT id,id,ST_SetSRID(ST_MakePoint(x,4000005),32640),0,991600001,other,false
                 FROM (VALUES(991600011,700020,991600002),(991600012,700010,NULL),(991600013,700005,NULL)) d(id,x,other);
                 INSERT INTO routing_nodes(id,floor,geom,kind,ref_table,ref_id,area_id)
-                SELECT id,floor,geom,'door_access','door_access_points',id,from_area FROM door_access_points
+                SELECT id,floor,fn_dap_node_geom_inside_area(geom,from_area,0.20),
+                  'door_access','door_access_points',id,from_area FROM door_access_points
                 WHERE id BETWEEN 991600011 AND 991600013;
                 INSERT INTO routing_nodes(id,floor,geom,kind,ref_table,ref_id,area_id)
-                SELECT 991600021,floor,geom,'door_access','door_access_points',id,to_area FROM door_access_points WHERE id=991600011;
+                SELECT 991600021,floor,fn_dap_node_geom_inside_area(geom,to_area,0.20),
+                  'door_access','door_access_points',id,to_area FROM door_access_points WHERE id=991600011;
                 INSERT INTO routing_edges_static(id,floor,src,dst,geom,base_cost,door_id)
                 SELECT e.id,0,s.id,t.id,ST_MakeLine(s.geom,t.geom),GREATEST(ST_Distance(s.geom,t.geom),0.01),e.door_id
                 FROM (VALUES (991600031,991600011,991600012,NULL::bigint),
@@ -44,6 +46,8 @@ class ExplicitDoorRouteTest extends TestCase
             $picker = '/api/v1/area-doors?area_id=991600001&floor=0&mode=walk&gender=both';
             $findDoor = fn () => collect($this->getJson($picker)->assertOk()->json('data.doors'))
                 ->firstWhere('accessId', 991600011);
+            $this->assertGreaterThan(0.19, (float) DB::scalar('SELECT ST_Distance(n.geom,p.geom)
+                FROM routing_nodes n JOIN door_access_points p ON p.id=n.ref_id WHERE n.id=991600011'));
             $this->assertSame('available', $findDoor()['routingStatus']);
             $this->assertSame(991600001, $findDoor()['selectedAreaId']);
 

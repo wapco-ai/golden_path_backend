@@ -40,7 +40,9 @@ class DoorRouteEndpointService
             CROSS JOIN LATERAL (SELECT ST_Transform(p.geom,4326) AS point) wgs
             LEFT JOIN LATERAL fn_allowed_doors(now(),i.gender,i.mode,i.floor) d ON d.id=p.door_id
             LEFT JOIN routing_nodes n ON n.floor=p.floor AND n.area_id=p.area_id
-                AND n.ref_table='door_access_points' AND n.ref_id=p.id AND ST_OrderingEquals(n.geom,p.geom)
+                AND n.ref_table='door_access_points' AND n.ref_id=p.id
+                AND (ST_OrderingEquals(n.geom,p.geom)
+                    OR fn_route_line_valid_inside_area(p.area_id,ST_MakeLine(p.geom,n.geom),0.20))
             LEFT JOIN live_nodes l ON l.id=n.id
             LEFT JOIN door_access_points nearby ON nearby.id=i.near_id AND nearby.floor=p.floor
             ORDER BY distance_m NULLS LAST,p.id,n.id
