@@ -11,3 +11,5 @@ Default Haram policy disables GPS acquisition and correction. Dead reckoning kee
 Validation: NavigationSettingsTest covers anonymous/unauthorized writes, persistence, stale updates, and invalid threshold combinations. CI rehearses SQL apply/rollback/reapply and checks speed and policy persistence. Existing PostgreSQL routing suites verify route output. SQLite cannot run the PostgreSQL spatial suites.
 
 Rollback: restore the previous frontend/backend files first. The additive navigation columns can remain safely; if removing them, apply navigation down before timing down. Timing down restores the original route-speed functions. Back up settings and affected function definitions before production deployment.
+
+Apply `20261111_130000_exact_door_route_timing` after the policy migration on existing installations. It updates the optional ten-argument exact-DAP solver, which may predate configurable timing. CI installs that overload before the timing migration to exercise this upgrade order. Roll it back before the original timing migration; it changes only the speed expression and preserves geometry and function privileges.

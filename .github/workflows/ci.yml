@@ -232,13 +232,19 @@ jobs:
         env:
           PGPASSWORD: connector_test_only
         run: |
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261110_160000_explicit_door_endpoints.up.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261110_150000_configurable_route_timing.up.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261111_120000_navigation_policy.up.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261111_130000_exact_door_route_timing.up.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/tests/navigation_policy_test.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261111_130000_exact_door_route_timing.down.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261111_120000_navigation_policy.down.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261110_150000_configurable_route_timing.down.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261110_150000_configurable_route_timing.up.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261111_120000_navigation_policy.up.sql
+
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261111_130000_exact_door_route_timing.up.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/tests/navigation_policy_test.sql
 
       - name: Same-floor stair HTTP and routing tests
         run: vendor/bin/phpunit -c phpunit.integration.xml --testsuite SameFloorStairs
@@ -248,7 +254,6 @@ jobs:
         env:
           PGPASSWORD: connector_test_only
         run: |
-          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261110_160000_explicit_door_endpoints.up.sql
           cd src
           vendor/bin/phpunit -c phpunit.integration.xml tests/Feature/ExplicitDoorRouteTest.php
           cd ..

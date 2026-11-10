@@ -6,6 +6,9 @@ BEGIN
         RAISE EXCEPTION 'Unsafe default navigation policy';
     END IF;
     IF public.fn_routing_walk_speed() <> 1.2 THEN RAISE EXCEPTION 'Wrong default walking speed'; END IF;
+    IF strpos(pg_get_functiondef('public.fn_route_multifloor_edges(timestamptz,public.gender_enum,text,smallint,smallint,public.geometry,public.geometry,integer,bigint,bigint)'::regprocedure), 'ELSE public.fn_routing_walk_speed() END') = 0 THEN
+        RAISE EXCEPTION 'Existing exact-door overload ignored configurable walking speed';
+    END IF;
     UPDATE public.routing_timing_settings SET walk_speed_mps = 0.8;
     IF public.fn_routing_walk_speed() <> 0.8 THEN RAISE EXCEPTION 'Walking speed did not persist'; END IF;
     UPDATE public.routing_timing_settings SET navigation_policy = jsonb_set(navigation_policy, '{warning_uncertainty_m}', '25');
