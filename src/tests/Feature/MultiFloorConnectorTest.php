@@ -103,6 +103,7 @@ class MultiFloorConnectorTest extends TestCase
         $this->assertCount(1,$transfers);
         $this->assertSame(-1,$transfers[0]['fromFloor']);
         $this->assertSame(1,$transfers[0]['toFloor']);
+        $this->assertSame('از آسانسور آزمایشی به طبقهٔ 1 بروید.', $transfers[0]['instruction']);
         $this->assertSame(36.0,$transfers[0]['duration_s']);
         $this->assertNull($r['segments'][1]['geometry']);
         $arrival = $r['steps'][count($r['steps'])-1];
@@ -110,6 +111,13 @@ class MultiFloorConnectorTest extends TestCase
         $this->assertSame(1,$arrival['routeM']);
         $this->assertSame(1,$arrival['floor']);
         $this->assertSame(count($r['segments'])-1,$arrival['segmentId']);
+
+        $groundRoute = $this->route(-1, 0);
+        $groundTransfers = array_values(array_filter($groundRoute['steps'], fn ($step) => $step['type'] === 'stepChangeFloor'));
+        $this->assertCount(1, $groundTransfers);
+        $this->assertSame(0, $groundTransfers[0]['toFloor']);
+        $this->assertSame('از آسانسور آزمایشی به طبقه همکف بروید.', $groundTransfers[0]['instruction']);
+        $this->assertSame($groundTransfers[0]['instruction'], $groundRoute['segments'][$groundTransfers[0]['segmentId']]['steps'][0]['instruction']);
     }
 
     public function test_rebuilding_node_ids_preserves_linkage_and_identical_xy_stays_on_distinct_floors(): void

@@ -143,12 +143,7 @@ class MultiFloorRoutingService
             $to = json_decode($edge->to_point, true)['coordinates'];
             $fromFloor = (int) $edge->from_floor; $toFloor = (int) $edge->to_floor;
             $segmentId = count($segments);
-            $instruction = match ($lang) {
-                'en' => "Take {$title} to floor {$toFloor}.",
-                'ar' => "استخدم {$title} إلى الطابق {$toFloor}.",
-                'ur' => "{$title} سے منزل {$toFloor} پر جائیں۔",
-                default => "از {$title} به طبقهٔ {$toFloor} بروید.",
-            };
+            $instruction = $this->floorChangeInstruction($lang, $title, $toFloor);
             $step = ['type'=>'stepChangeFloor','title'=>$title,'instruction'=>$instruction,
                 'coord'=>['lat'=>$from[1],'lon'=>$from[0]],'endCoord'=>['lat'=>$to[1],'lon'=>$to[0]],
                 'floor'=>$fromFloor,'fromFloor'=>$fromFloor,'toFloor'=>$toFloor,
@@ -174,6 +169,25 @@ class MultiFloorRoutingService
             'steps'=>$steps,'sahns'=>$sahns,'segments'=>$segments,'multifloor'=>$multifloor,
             'geo'=>['type'=>'Feature','geometry'=>['type'=>$multifloor ? 'MultiLineString' : 'LineString','coordinates'=>$multifloor ? $lines : ($lines[0] ?? [])],
                 'properties'=>['segments'=>$segments,'multifloor'=>$multifloor,'distanceMeters'=>$distance,'durationSeconds'=>$duration]]];
+    }
+
+    private function floorChangeInstruction(string $lang, string $title, int $toFloor): string
+    {
+        if ($toFloor === 0) {
+            return match ($lang) {
+                'en' => "Take {$title} to the ground floor.",
+                'ar' => "استخدم {$title} إلى الطابق الأرضي.",
+                'ur' => "{$title} سے گراؤنڈ فلور پر جائیں۔",
+                default => "از {$title} به طبقه همکف بروید.",
+            };
+        }
+
+        return match ($lang) {
+            'en' => "Take {$title} to floor {$toFloor}.",
+            'ar' => "استخدم {$title} إلى الطابق {$toFloor}.",
+            'ur' => "{$title} سے منزل {$toFloor} پر جائیں۔",
+            default => "از {$title} به طبقهٔ {$toFloor} بروید.",
+        };
     }
 
     private function stairStep(object $edge, array $points, float $walkedDistance, float $distance, string $lang): array
