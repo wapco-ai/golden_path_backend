@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Http\Middleware\AdminAuth;
 use App\Http\Middleware\AdminSectionAccess;
+use App\Jobs\RebuildDoorGraphJob;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -228,6 +229,52 @@ class SameFloorStairTest extends TestCase
         DB::update('UPDATE door_access_points SET geom=ST_Translate(geom, 0.002, 0) WHERE id=?', [$query['start_access_id']]);
         DB::select('SELECT fn_build_routing_nodes((-1)::smallint)');
         $this->getJson($url.http_build_query($query))->assertOk()->assertExactJson(['areas' => []]);
+    }
+
+    public function test_moving_a_landing_preserves_the_stair_and_its_editable_record(): void
+    {
+        $this->withoutMiddleware([AdminAuth::class, AdminSectionAccess::class]);
+        \Illuminate\Support\Facades\Queue::fake();
+        $payload = $this->payload();
+        $stair = $this->postJson(self::API, $payload)->assertCreated()->json('data');
+        $landing = $payload['stops'][0];
+        $doorUrl = '/api/v1/doors/'.$landing['door_id'];
+
+        $this->getJson($doorUrl.'/info?access_id='.$landing['access_id'])->assertOk()
+            ->assertJsonPath('connector.id', $stair['id'])
+            ->assertJsonPath('connector.kind', 'same_floor_stair');
+        $this->putJson($doorUrl.'/move', ['x' => 500020, 'y' => 4000002, 'floor' => -1])
+            ->assertUnprocessable()->assertJsonValidationErrors('point');
+        $this->getJson($doorUrl.'/info')->assertOk()->assertJsonPath('connector.version', $stair['version']);
+
+        $this->putJson($doorUrl.'/move', ['x' => 500020, 'y' => 4000011, 'floor' => -1])
+            ->assertAccepted()->assertJsonPath('door_access_point.id', $landing['access_id']);
+        $this->getJson($doorUrl.'/info')->assertOk()
+            ->assertJsonPath('connector.is_active', true)
+            ->assertJsonPath('connector.version', $stair['version'] + 1)
+            ->assertJsonPath('connector.stops.0.error', null);
+
+        (new RebuildDoorGraphJob($landing['door_id']))->handle();
+        // The test's outer transaction keeps commit-time edge refresh deferred.
+        DB::statement('SET CONSTRAINTS same_floor_stair_edge_removed IMMEDIATE');
+        $this->assertSame('ready', DB::scalar(
+            "SELECT attrs->'graph'->>'status' FROM doors WHERE id=?", [$landing['door_id']]
+        ));
+        $this->assertTrue((bool) DB::scalar(<<<'SQL'
+            SELECT EXISTS (
+                SELECT 1 FROM routing_edges_static e
+                JOIN routing_nodes n ON n.id = e.src
+                JOIN door_access_points p ON p.id = n.ref_id AND n.ref_table = 'door_access_points'
+                WHERE e.attrs->>'stair_id' = ?::text AND p.id = ?
+                  AND ST_Equals(ST_StartPoint(e.geom), p.geom) AND ST_Y(p.geom) = 4000011
+            )
+            SQL, [$stair['id'], $landing['access_id']]));
+        $payload['version'] = $stair['version'];
+        $this->putJson(self::API.'/'.$stair['id'], $payload)->assertConflict();
+        $payload['version']++;
+        $payload['direction'] = 'reverse';
+        $this->putJson(self::API.'/'.$stair['id'], $payload)->assertOk()
+            ->assertJsonPath('data.direction', 'reverse');
     }
 
     public function test_admin_permissions_and_validation_reject_invalid_landings(): void

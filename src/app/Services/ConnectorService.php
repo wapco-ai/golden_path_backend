@@ -11,6 +11,8 @@ class ConnectorService
 {
     // Only these types require shared multi-floor stops for new points.
     // 'connection' may be an ordinary single-floor point or a shared connector.
+    public const INVALID_ACCESS_MESSAGE = 'نقطهٔ دسترسی معتبر در این طبقه انتخاب کنید.';
+
     public const KINDS = ['stair', 'ramp', 'elevator', 'escalator'];
 
     public function candidates(array $point): array
@@ -22,7 +24,7 @@ class ConnectorService
     private function candidateAreas(?object $dap, int $floor, string $errorField): array
     {
         if (!$dap || (int) $dap->floor !== $floor || $dap->needs_review) {
-            throw ValidationException::withMessages([$errorField => 'نقطهٔ دسترسی معتبر در این طبقه انتخاب کنید.']);
+            throw ValidationException::withMessages([$errorField => self::INVALID_ACCESS_MESSAGE]);
         }
         return DB::select("SELECT a.id, a.floor, COALESCE(t.txt, 'محدوده ' || a.id) AS name
             FROM areas a LEFT JOIN LATERAL (SELECT txt FROM i18n_texts
@@ -38,7 +40,10 @@ class ConnectorService
         $stops = DB::select("SELECT s.id,s.floor,s.door_id,s.position,s.area_id,
             COALESCE(s.access_id, resolved.id) AS access_id,s.travel_seconds,s.reverse_seconds,
             ST_Y(ST_Transform(dap.geom,4326)) AS lat,ST_X(ST_Transform(dap.geom,4326)) AS lon,
-            COALESCE(t.txt,'محدوده ' || s.area_id) AS area_name
+            COALESCE(t.txt,'محدوده ' || s.area_id) AS area_name,
+            CASE WHEN dap.id IS NULL OR dap.floor <> s.floor OR dap.needs_review
+                OR (s.area_id IS DISTINCT FROM dap.from_area AND s.area_id IS DISTINCT FROM dap.to_area)
+                THEN ? END AS error
             FROM routing_connector_stops s
             LEFT JOIN LATERAL (SELECT min(d.id) AS id FROM door_access_points d
               WHERE d.door_id=s.door_id AND d.floor=s.floor AND NOT d.needs_review
@@ -46,7 +51,7 @@ class ConnectorService
             LEFT JOIN door_access_points dap ON dap.id=COALESCE(s.access_id,resolved.id)
             LEFT JOIN LATERAL (SELECT txt FROM i18n_texts WHERE entity_table='areas'
               AND entity_id=s.area_id AND field='name' AND lang='fa' LIMIT 1) t ON true
-            WHERE s.connector_id=? ORDER BY s.position", [$id]);
+            WHERE s.connector_id=? ORDER BY s.position", [self::INVALID_ACCESS_MESSAGE, $id]);
         $info = json_decode($connector->info, true);
         $info['operational']['status'] = $connector->is_active ? 'active' : 'inactive';
         return [

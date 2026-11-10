@@ -217,6 +217,14 @@ jobs:
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/tests/nearby_zero_length_edges_test.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261110_140000_nearby_zero_length_edges.down.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261110_140000_nearby_zero_length_edges.up.sql
+      - name: Verify stair landing move migration and rollback
+        env:
+          PGPASSWORD: connector_test_only
+        run: |
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261110_190000_preserve_same_floor_stair_landing.up.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261110_190000_preserve_same_floor_stair_landing.down.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261110_190000_preserve_same_floor_stair_landing.up.sql
+
       - name: Same-floor stair HTTP and routing tests
         run: vendor/bin/phpunit -c phpunit.integration.xml --testsuite SameFloorStairs
         working-directory: src
