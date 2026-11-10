@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Services\CulturalMapGroup;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Http\JsonResponse;
@@ -67,6 +68,8 @@ class MapGeojsonController extends Controller
                 ];
             }
 
+            $geojson['features'] = $this->applyAssignedMainGroups($geojson['features'] ?? []);
+
             return response()->json($geojson);
 
         } catch (\Throwable $e) {
@@ -79,5 +82,28 @@ class MapGeojsonController extends Controller
                 'message' => config('app.debug') ? $e->getMessage() : 'Map service error',
             ], 500);
         }
+    }
+
+    private function applyAssignedMainGroups(array $features): array
+    {
+        $pointIds = [];
+        foreach ($features as $index => $feature) {
+            $id = $feature['properties']['id'] ?? '';
+            if (preg_match('/^poi_points-([0-9]+)$/D', $id, $matches)) {
+                $pointIds[$index] = $matches[1];
+            }
+        }
+
+        $groups = CulturalMapGroup::codesByPointId(array_values($pointIds));
+        foreach ($pointIds as $index => $id) {
+            $group = $groups->get($id);
+            if ($group !== null) {
+                $features[$index]['properties']['group'] = $group;
+                $features[$index]['properties']['subGroup'] = null;
+                $features[$index]['properties']['subGroupValue'] = 'poi-'.$id;
+            }
+        }
+
+        return $features;
     }
 }

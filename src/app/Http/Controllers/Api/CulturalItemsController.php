@@ -668,10 +668,10 @@ class CulturalItemsController extends Controller
                     $attrs['grouping'] = $payload['grouping'];
                     $updates['attrs'] = json_encode($attrs, JSON_UNESCAPED_UNICODE);
 
-                    // اگر sub_group_id ارسال شد، category_leaf_id هم بروز شود
-                    $subGroupId = data_get($payload, 'grouping.sub_group_id');
-                    if ($subGroupId !== null) {
-                        $updates['category_leaf_id'] = (int) $subGroupId;
+                    $leafId = data_get($payload, 'grouping.sub_group_id')
+                        ?? data_get($payload, 'grouping.group_id');
+                    if ($leafId !== null) {
+                        $updates['category_leaf_id'] = (int) $leafId;
                     }
                 }
 
@@ -936,9 +936,9 @@ class CulturalItemsController extends Controller
         ];
 
 
-        // اگر ستون category_leaf_id داری
-        $subGroupId = data_get($poi, 'grouping.sub_group_id');
-        $leafId = $subGroupId ?? ($poi['category_leaf_id'] ?? null);
+        $leafId = data_get($poi, 'grouping.sub_group_id')
+            ?? data_get($poi, 'grouping.group_id')
+            ?? ($poi['category_leaf_id'] ?? null);
 
         if ($leafId !== null) {
             $insert['category_leaf_id'] = (int) $leafId;

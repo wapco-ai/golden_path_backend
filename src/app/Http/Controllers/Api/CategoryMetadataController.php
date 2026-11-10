@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Services\CulturalMapGroup;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -184,13 +185,9 @@ class CategoryMetadataController extends Controller
             $offset = 0;
         }
 
-        // 2) کوئری اصلی: دسته‌بندی از روی poi_points.category_leaf_id
-        // p.category_leaf_id → c_leaf.id
-        // c_leaf.parent_id → c_group.id (اگر leaf خودش group باشد، parent_id = null)
-        $baseQuery = DB::table('poi_points as p')
-            ->join('categories as c_leaf', 'c_leaf.id', '=', 'p.category_leaf_id')
+        $baseQuery = CulturalMapGroup::joinAssignedMainGroup(DB::table('poi_points as p'))
+            ->join('categories as c_leaf', 'c_leaf.id', '=', DB::raw('COALESCE(assigned_group.id, p.category_leaf_id)'))
             ->leftJoin('categories as c_group', 'c_group.id', '=', 'c_leaf.parent_id')
-            ->whereNotNull('p.category_leaf_id')
             ->where('c_leaf.is_active', true)
             ->where(function ($q) {
                 $q->whereNull('c_group.id')
@@ -201,8 +198,7 @@ class CategoryMetadataController extends Controller
         $poiRows = $baseQuery
             ->select(
                 'p.id as poi_id',
-                // مقدار زیرگروه (value) از روی poi_type (enum)
-                'p.poi_type as value',
+                DB::raw("CASE WHEN assigned_group.id IS NOT NULL THEN 'poi-' || p.id::text ELSE p.poi_type::text END as value"),
                 'p.floor as floor',
                 // مختصات نقطه؛ فرض بر این است که geom در SRID=32640 است
                 DB::raw('ST_Y(ST_Transform(p.geom, 4326)) as lat'),

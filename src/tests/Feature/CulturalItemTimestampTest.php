@@ -98,6 +98,63 @@ class CulturalItemTimestampTest extends TestCase
         );
     }
 
+    public function test_main_group_only_is_used_by_both_public_map_endpoints_for_legacy_data(): void
+    {
+        $groupId = DB::table('categories')->insertGetId([
+            'code' => $this->marker, 'property_target' => 'group', 'level' => 1, 'is_active' => true,
+        ]);
+        $oldGroupId = DB::table('categories')->insertGetId([
+            'code' => $this->marker.'-old', 'property_target' => 'group', 'level' => 1, 'is_active' => true,
+        ]);
+        $id = $this->poi(['grouping' => ['group_id' => (string) $groupId, 'sub_group_id' => null], 'group' => 'other']);
+        $this->content($id, 'fa', null);
+        DB::table('poi_points')->where('id', $id)->update(['category_leaf_id' => $oldGroupId]);
+
+        $list = '/api/v1/groups/subgroups?withImages=false&search='.$this->marker;
+        $this->getJson($list)->assertOk()
+            ->assertJsonCount(1, 'subGroups')
+            ->assertJsonPath('subGroups.'.$this->marker.'.0.label.fa', $this->marker.' نام مکان')
+            ->assertJsonPath('subGroups.'.$this->marker.'.0.value', 'poi-'.$id);
+        $this->getJson($list.'&group='.$this->marker.'-old')->assertOk()->assertJsonCount(0, 'subGroups');
+        $this->getJson('/api/v1/landmark-places?poi_id='.$id)->assertOk()
+            ->assertJsonPath('places.landmarkPlaces.0.group', $this->marker)
+            ->assertJsonPath('places.landmarkPlaces.0.subGroup', null)
+            ->assertJsonPath('places.landmarkPlaces.0.subGroupValue', 'poi-'.$id);
+        $features = $this->getJson('/api/v1/maps/geojson?floor=0')->assertOk()->json('features');
+        $feature = collect($features)->firstWhere('properties.id', 'poi_points-'.$id);
+        $this->assertNotNull($feature);
+        $this->assertSame($this->marker, $feature['properties']['group']);
+        $this->assertNull($feature['properties']['subGroup']);
+        $this->assertSame('poi-'.$id, $feature['properties']['subGroupValue']);
+    }
+
+    public function test_creating_and_editing_a_cultural_poi_persists_the_effective_category(): void
+    {
+        $groupId = DB::table('categories')->insertGetId([
+            'code' => $this->marker, 'property_target' => 'group', 'level' => 1, 'is_active' => true,
+        ]);
+        $subGroupId = DB::table('categories')->insertGetId([
+            'code' => $this->marker.'-child', 'property_target' => 'subGroup', 'level' => 2,
+            'parent_id' => $groupId, 'is_active' => true,
+        ]);
+        $id = $this->postJson('/api/v1/cultural-items', [
+            'poi' => [
+                'location' => ['lat' => 36.2853, 'lng' => 59.6134],
+                'grouping' => ['group_id' => $groupId],
+            ],
+            'translations' => ['fa' => ['title' => $this->marker]],
+        ])->assertOk()->json('poiId');
+        $this->assertDatabaseHas('poi_points', ['id' => $id, 'category_leaf_id' => $groupId]);
+
+        $url = '/api/v1/cultural-items/'.$id;
+        $this->putJson($url, [
+            'poi_id' => $id, 'grouping' => ['group_id' => $groupId, 'sub_group_id' => $subGroupId],
+        ])->assertOk();
+        $this->assertDatabaseHas('poi_points', ['id' => $id, 'category_leaf_id' => $subGroupId]);
+        $this->putJson($url, ['poi_id' => $id, 'grouping' => ['group_id' => $groupId, 'sub_group_id' => null]])->assertOk();
+        $this->assertDatabaseHas('poi_points', ['id' => $id, 'category_leaf_id' => $groupId]);
+    }
+
     public function test_list_and_details_use_first_content_creation_in_utc_without_changing_existing_fields(): void
     {
         DB::statement("SET LOCAL TIME ZONE 'Asia/Tehran'");
