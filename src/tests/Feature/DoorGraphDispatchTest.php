@@ -231,4 +231,53 @@ class DoorGraphDispatchTest extends TestCase
         $this->assertSame(0, DB::transactionLevel());
         $this->assertSame(1, (int) DB::selectOne('SELECT 1 AS healthy')->healthy);
     }
+
+    public function test_editing_door_gender_updates_live_access_and_preserves_omitted_rules(): void
+    {
+        $id = (int) $this->createWithInfo()['door']['id'];
+        $payload = $this->info();
+        $payload['operational']['gender_access'] = ['female'];
+        $payload['time_restrictions'] = [[
+            'date_scope' => ['ALL_DAYS'], 'gender' => ['female'], 'all_hours' => false,
+            'time_ranges' => [['start' => '02:00', 'end' => '03:00']],
+        ]];
+        $payload['prayer_restrictions'] = [[
+            'date' => '2099-01-01', 'events' => ['fajr'],
+            'before_minutes' => 10, 'after_minutes' => 5, 'gender' => ['female'],
+        ]];
+        $url = '/api/v1/doors/' . $id . '/info';
+        $this->putJson($url, $payload)->assertAccepted();
+
+        $familyCanPass = static fn (string $time = '12:00'): bool => DB::selectOne(
+            "SELECT EXISTS(SELECT 1 FROM public.fn_allowed_doors(?::timestamptz, 'both', 'walk', 0::smallint)
+                WHERE id = ? AND is_allowed) AS allowed",
+            ["2026-01-15 {$time}:00+03:30", $id]
+        )->allowed;
+        $this->assertFalse($familyCanPass());
+
+        $rules = static fn (string $kind) => DB::table('access_' . $kind . '_restrictions')
+            ->where('entity_table', 'doors')->where('entity_id', $id);
+        $time = (array) $rules('time')->sole();
+        $prayer = (array) $rules('prayer')->sole();
+
+        $this->putJson($url, [
+            'basic_info' => $payload['basic_info'],
+            'operational' => ['gender_access' => ['family']],
+        ])->assertAccepted();
+        $this->assertTrue($familyCanPass());
+        $this->assertFalse($familyCanPass('02:30'));
+        $this->getJson($url)->assertOk()->assertJsonPath('operational.gender_access', ['both']);
+        $this->assertSame($time, (array) $rules('time')->sole());
+        $this->assertSame($prayer, (array) $rules('prayer')->sole());
+
+        $this->putJson($url, [
+            'basic_info' => $payload['basic_info'],
+            'operational' => ['gender_access' => []],
+            'time_restrictions' => [],
+        ])->assertAccepted();
+        $this->assertTrue($familyCanPass());
+        $this->getJson($url)->assertOk()->assertJsonPath('operational.gender_access', ['both']);
+        $this->assertSame(0, $rules('time')->count());
+        $this->assertSame($prayer, (array) $rules('prayer')->sole());
+    }
 }
