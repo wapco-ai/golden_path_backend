@@ -271,6 +271,7 @@ Route::prefix('v1')->group(function () {
     Route::get('/groups/metadata', [CategoryMetadataController::class, 'groupsMetadata']);
     Route::get('/groups/subgroups', [CategoryMetadataController::class, 'subGroups']);
     Route::get('area-doors', [AreaDoorsController::class, 'byPoint']);
+    Route::get('route-endpoint-label', [AreaDoorsController::class, 'endpointLabel'])->middleware('throttle:120,1');
     // لیست نظرات تأیید شده
     Route::get('/feedbacks', [FeedbackController::class, 'index']);
     // خلاصه‌ی امتیاز (ratingAvg, ratingCount, ...)

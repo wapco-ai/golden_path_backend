@@ -29,7 +29,8 @@ class DoorRouteEndpointService
             )
             SELECT p.id AS access_id, p.door_id, p.area_id, p.floor, n.id AS node_id,
                 ST_Y(wgs.point) AS lat, ST_X(wgs.point) AS lon,
-                fn_i18n_label('areas',p.other_area_id,'name',i.lang,'fa') AS name,
+                COALESCE(NULLIF(btrim(fn_i18n_label('doors',p.door_id,'name',i.lang,'fa')), ''),
+                    fn_i18n_label('areas',p.other_area_id,'name',i.lang,'fa')) AS name,
                 ST_Distance(p.geom,nearby.geom) AS distance_m,
                 CASE
                     WHEN d.is_open IS FALSE THEN 'closed'

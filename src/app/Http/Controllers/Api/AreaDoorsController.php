@@ -4,12 +4,27 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Services\AreaEndpointService;
+use App\Services\RouteEndpointLabelService;
 use App\Services\DoorRouteEndpointService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class AreaDoorsController extends Controller
 {
+    public function endpointLabel(Request $request, RouteEndpointLabelService $labels)
+    {
+        $point = $request->validate([
+            'lat' => 'required|numeric|between:-90,90',
+            'lon' => 'required|numeric|between:-180,180',
+            'floor' => 'required|integer|min:-32768|max:32767',
+            'lang' => 'nullable|string|in:fa,en,ar,ur',
+        ]);
+
+        return response()->json([
+            'label' => $labels->find($point['lat'], $point['lon'], $point['floor'], $point['lang'] ?? 'fa'),
+        ])->header('Cache-Control', 'no-store');
+    }
+
     public function byPoint(Request $request, AreaEndpointService $areaEndpoints, DoorRouteEndpointService $doorEndpoints)
     {
         // 1) اعتبارسنجی ورودی
@@ -92,6 +107,7 @@ class AreaDoorsController extends Controller
                 $status = $statuses->get($door['accessId'].':'.$selectedArea);
                 $door['selectedAreaId'] = $selectedArea;
                 $door['routingStatus'] = $status?->status ?? 'unavailable';
+                $door['routingName'] = $status?->name;
             }
             unset($door);
         }

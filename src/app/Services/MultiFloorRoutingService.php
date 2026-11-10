@@ -36,11 +36,14 @@ class MultiFloorRoutingService
                 }
                 if ($nearbyRows) {
                     $route = $this->assemble($nearbyRows, $mode, $lang);
+                    $labels = new RouteEndpointLabelService();
                     if ($nearbyOrigin) {
-                        [$lon, $lat] = json_decode($nearbyRows[0]->from_point, true)['coordinates'];
+                        $firstEdge = $nearbyRows[0];
+                        [$lon, $lat] = json_decode($firstEdge->from_point, true)['coordinates'];
                         $route['geo']['properties']['nearbyOrigin'] = [
                             'coordinates' => [$lat, $lon],
-                            'floor' => (int) $nearbyRows[0]->from_floor,
+                            'floor' => (int) $firstEdge->from_floor,
+                            'label' => $labels->find($lat, $lon, $firstEdge->from_floor, $lang, $firstEdge->edge_id),
                         ];
                         if ($route['steps'][0]['type'] === 'stepStart') {
                             $route['steps'][0]['instruction'] = match ($lang) {
@@ -54,10 +57,12 @@ class MultiFloorRoutingService
                     if (!$nearbyOrigin || $nearbyRows[0]->nearby_destination) {
                         $lastStep = array_key_last($route['steps']);
                         $step = $route['steps'][$lastStep];
+                        $lastEdge = $nearbyRows[array_key_last($nearbyRows)];
                         $route['steps'][$lastStep]['instruction'] = $this->nearbyArrivalInstruction($lang, $destinationName);
                         $route['geo']['properties']['nearbyDestination'] = [
                             'coordinates' => [$step['coord']['lat'], $step['coord']['lon']],
                             'floor' => $step['floor'],
+                            'label' => $labels->find($step['coord']['lat'], $step['coord']['lon'], $step['floor'], $lang, $lastEdge->edge_id),
                         ];
                     }
                     $route['alternatives'] = [];
