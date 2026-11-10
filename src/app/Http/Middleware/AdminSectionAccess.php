@@ -17,6 +17,7 @@ class AdminSectionAccess
             return ['مدیریت دسته بندی', 'مدیریت اطلاعات فرهنگی'];
         }
         $sections = [
+            'admin/navigation-settings' => [AdminAccess::SUPER_TITLE],
             'admin/admins' => ['مدیریت ادمین ها'],
             'admin/users' => ['مدیریت کاربران ثبت نام کرده', 'مدیریت کاربران'],
             'admin/user-logs' => ['مدیریت لاگ های مسیریابی'],

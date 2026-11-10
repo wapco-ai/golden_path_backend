@@ -60,6 +60,11 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
 });
 
 Route::prefix('v1')->group(function () {
+    Route::get('navigation-settings', [\App\Http\Controllers\Api\NavigationSettingsController::class, 'show']);
+    Route::middleware([AdminAuth::class, AdminSectionAccess::class])->group(function () {
+        Route::get('admin/navigation-settings', [\App\Http\Controllers\Api\NavigationSettingsController::class, 'show']);
+        Route::put('admin/navigation-settings', [\App\Http\Controllers\Api\NavigationSettingsController::class, 'update']);
+    });
     Route::prefix('admin/auth')->group(function () {
 
         Route::post('login', [AdminAuthController::class, 'login'])
