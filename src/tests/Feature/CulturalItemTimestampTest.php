@@ -184,10 +184,31 @@ class CulturalItemTimestampTest extends TestCase
         $this->assertFalse($item['showUserFeedbacks']);
         $this->assertFalse($item['showMediaGallery']);
         $this->assertSame('tarikhi', $item['placeType']);
+        $this->assertSame(0, $item['location']['floor']);
         $this->assertEqualsWithDelta(36.2853, $item['location']['lat'], 0.0000001);
         $this->assertEqualsWithDelta(59.6134, $item['location']['lng'], 0.0000001);
         $this->assertEquals([$time], $item['time_restrictions']);
         $this->assertEquals([$prayer], $item['prayer_restrictions']);
+    }
+
+    public function test_new_cultural_poi_persists_basement_floor_before_media_upload(): void
+    {
+        $groupId = DB::table('categories')->insertGetId([
+            'code' => $this->marker, 'property_target' => 'poi_points', 'level' => 1,
+        ]);
+        $item = $this->postJson('/api/v1/cultural-items', [
+            'poi' => [
+                'floor' => -1,
+                'location' => ['lat' => 36.2853, 'lng' => 59.6134],
+                'grouping' => ['group_id' => $groupId],
+            ],
+            'translations' => ['fa' => ['title' => $this->marker, 'media' => []]],
+        ])->assertOk()->assertJsonPath('location.floor', -1)->json();
+
+        $id = $item['poiId'];
+        $this->assertDatabaseHas('poi_points', ['id' => $id, 'floor' => -1]);
+        $this->assertSame(-1, $this->details($id)['location']['floor']);
+        $this->assertSame(-1, $this->listed($id)['location']['floor']);
     }
 
     public function test_edit_preserves_creation_media_and_unrelated_poi_and_restriction_data(): void
