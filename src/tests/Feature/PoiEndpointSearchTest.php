@@ -148,9 +148,12 @@ class PoiEndpointSearchTest extends TestCase
         $places = $this->places([...$query, 'search' => 'روضة الاختبار', 'language' => 'ar']);
         $this->assertSame(["area-{$area}"], array_column($places, 'id'));
         $this->assertSame('روضة الاختبار', $places[0]['title']);
+        $this->assertSame(["area-{$area}"], array_column($this->places([
+            ...$query, 'search' => 'الاختبار', 'language' => 'ar',
+        ]), 'id'));
     }
 
-    public function test_destination_search_adds_only_exact_public_area_results_on_their_own_floors(): void
+    public function test_destination_search_includes_partial_public_areas_and_distinct_pois(): void
     {
         $title = 'صحن کوی آزمون';
         $ground = $this->area($title, 0, 500000, 500040);
@@ -161,10 +164,9 @@ class PoiEndpointSearchTest extends TestCase
         $internal = (string) $this->poi(0, 'مسئول صحن کوی آزمون');
 
         $this->assertEqualsCanonicalizing([$proxy, $internal], array_column($this->places(['search' => $title]), 'id'));
-        $this->assertEqualsCanonicalizing([$proxy, $internal], array_column($this->places([
-            'search' => 'صحن کوی',
-            'include_exact_areas' => 1,
-        ]), 'id'));
+        $partial = ['search' => 'كوي آزمون', 'include_exact_areas' => 1];
+        $this->assertSame(["area-{$lower}", $internal, "area-{$ground}"], array_column($this->places($partial), 'id'));
+        $this->assertSame(["area-{$lower}", $internal], array_column($this->places([...$partial, 'limit' => 2]), 'id'));
 
         $matches = $this->places(['search' => $title, 'include_exact_areas' => 1]);
         $this->assertSame(["area-{$lower}", "area-{$ground}", $internal], array_column($matches, 'id'));
@@ -174,6 +176,15 @@ class PoiEndpointSearchTest extends TestCase
 
         $normalizedMatches = $this->places(['search' => 'صحن  كوي‌ آزمون', 'include_exact_areas' => 1]);
         $this->assertSame([$lower, $ground], array_column($normalizedMatches, 'areaId'));
+    }
+
+    public function test_exact_area_names_rank_above_partial_matches(): void
+    {
+        $this->area('صحن کوچک آزمون', -1, 500000, 500040);
+        $exact = $this->area('صحن کوچک', 0, 500000, 500040);
+
+        $matches = $this->places(['search' => 'صحن کوچک', 'include_exact_areas' => 1, 'limit' => 1]);
+        $this->assertSame(["area-{$exact}"], array_column($matches, 'id'));
     }
 
     public function test_area_doors_use_the_selected_area_id_floor_and_access_geometry(): void
@@ -290,6 +301,9 @@ class PoiEndpointSearchTest extends TestCase
             ->update(['txt' => 'اتاق خدمات آزمون']);
         $renamed = $this->places([...$exact, 'search' => 'اتاق خدمات آزمون']);
         $this->assertSame([$auxiliary], array_column($renamed, 'areaId'));
+        $partial = $this->places([...$exact, 'search' => 'آزمون']);
+        $this->assertContains($auxiliary, array_column($partial, 'areaId'));
+        $this->assertContains('test-riwaq', array_column($partial, 'areaGroupId'));
         DB::table('i18n_texts')->where('entity_table', 'areas')->where('entity_id', $auxiliary)
             ->update(['txt' => $title]);
         config(['area_endpoints.groups' => ['test-riwaq' => [...$group, 'floor' => -1]]]);
