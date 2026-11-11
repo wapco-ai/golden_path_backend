@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Support\RequestActivity;
 use Carbon\CarbonImmutable;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -66,8 +67,9 @@ class CulturalItemsController extends Controller
 
         $total = (clone $poiQuery)->count();
 
+        $this->orderCulturalList($poiQuery, $request->query('sort'));
+
         $pois = $poiQuery
-            ->orderByDesc('p.id')
             ->offset(($page - 1) * $pageSize)
             ->limit($pageSize)
             ->select([
@@ -183,6 +185,40 @@ class CulturalItemsController extends Controller
             'page'       => $page,
             'pageSize'   => $pageSize,
         ]);
+    }
+
+    private function orderCulturalList(Builder $query, mixed $sort): void
+    {
+        [$column, $direction] = array_pad(explode(':', is_string($sort) ? $sort : '', 2), 2, '');
+        if (!in_array($column, ['id', 'title', 'created_at'], true) || !in_array($direction, ['asc', 'desc'], true)) {
+            $query->orderByDesc('p.id');
+            return;
+        }
+
+        if ($column === 'id') {
+            $query->orderBy('p.id', $direction);
+            return;
+        }
+
+        if ($column === 'title') {
+            // Match the Persian title returned by the list, including its content fallback.
+            $query->leftJoin('i18n_texts as name_fa', function ($join) {
+                $join->on('name_fa.entity_id', '=', 'p.id')
+                    ->where('name_fa.entity_table', 'poi_points')
+                    ->where('name_fa.field', 'name')
+                    ->where('name_fa.lang', 'fa');
+            })->leftJoin('contents as content_fa', function ($join) {
+                $join->on('content_fa.poi_id', '=', 'p.id')->where('content_fa.lang', 'fa');
+            })->orderByRaw(
+                "COALESCE(NULLIF(BTRIM(name_fa.txt, ?), ''), NULLIF(content_fa.title, '')) COLLATE \"fa-x-icu\" {$direction} NULLS LAST",
+                [" \t\n\r\v"]
+            );
+        } else {
+            $query->leftJoinSub($this->culturalCreationDatesQuery(), 'creation', 'creation.poi_id', '=', 'p.id')
+                ->orderByRaw("creation.created_at {$direction} NULLS LAST");
+        }
+
+        $query->orderByDesc('p.id');
     }
 
     // ------------------------------------------------------------
@@ -580,15 +616,20 @@ class CulturalItemsController extends Controller
             return collect();
         }
 
+        return $this->culturalCreationDatesQuery()
+            ->whereIn('poi_id', $poiIds)
+            ->pluck('created_at', 'poi_id')
+            ->map(fn ($date) => $date === null ? null : CarbonImmutable::parse($date, 'UTC')->utc()->toIso8601String());
+    }
+
+    private function culturalCreationDatesQuery(): Builder
+    {
         // An item spans every translation. A legacy translation with no known
         // date must keep the item's creation unknown when another language is added.
         return DB::table('contents')
-            ->whereIn('poi_id', $poiIds)
             ->select('poi_id')
             ->selectRaw('CASE WHEN COUNT(created_at) = COUNT(*) THEN MIN(created_at) END AS created_at')
-            ->groupBy('poi_id')
-            ->pluck('created_at', 'poi_id')
-            ->map(fn ($date) => $date === null ? null : CarbonImmutable::parse($date, 'UTC')->utc()->toIso8601String());
+            ->groupBy('poi_id');
     }
 
 
