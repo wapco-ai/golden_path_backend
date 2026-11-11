@@ -11,8 +11,8 @@ class DoorRouteEndpointService
     {
         return DB::select(<<<'SQL'
             WITH input AS (
-                SELECT ?::jsonb AS area_ids, ?::smallint AS floor, ?::text AS mode,
-                    ?::gender_enum AS gender, ?::lang_enum AS lang, ?::bigint AS near_id
+                SELECT ?::jsonb AS area_ids, ?::smallint AS floor,
+                    ?::lang_enum AS lang, ?::bigint AS near_id
             ), access_points AS MATERIALIZED (
                 SELECT p.*, a.id AS area_id,
                     CASE WHEN p.from_area=a.id THEN p.to_area ELSE p.from_area END AS other_area_id
@@ -22,10 +22,12 @@ class DoorRouteEndpointService
                 WHERE a.floor=i.floor AND (a.attrs #>> '{access_policy,public_access}') IS DISTINCT FROM 'false'
             ), live_nodes AS MATERIALIZED (
                 SELECT DISTINCT node.id
-                FROM input i
-                CROSS JOIN LATERAL fn_routing_edges_live_param(now(),i.gender,i.mode,i.floor) e
+                FROM fn_routing_edges_live_param(now(),?::gender_enum,?::text,?::smallint) e
                 CROSS JOIN LATERAL (VALUES (e.src),(e.dst)) node(id)
                 WHERE e.cost>0 OR e.reverse_cost>0
+            ), door_status AS MATERIALIZED (
+                SELECT id, is_open, is_allowed
+                FROM fn_allowed_doors(now(),?::gender_enum,?::text,?::smallint)
             )
             SELECT p.id AS access_id, p.door_id, p.area_id, p.floor, n.id AS node_id,
                 ST_Y(wgs.point) AS lat, ST_X(wgs.point) AS lon,
@@ -39,7 +41,7 @@ class DoorRouteEndpointService
                 END AS status
             FROM access_points p CROSS JOIN input i
             CROSS JOIN LATERAL (SELECT ST_Transform(p.geom,4326) AS point) wgs
-            LEFT JOIN LATERAL fn_allowed_doors(now(),i.gender,i.mode,i.floor) d ON d.id=p.door_id
+            LEFT JOIN door_status d ON d.id=p.door_id
             LEFT JOIN routing_nodes n ON n.floor=p.floor AND n.area_id=p.area_id
                 AND n.ref_table='door_access_points' AND n.ref_id=p.id
                 AND (ST_OrderingEquals(n.geom,p.geom)
@@ -47,7 +49,11 @@ class DoorRouteEndpointService
             LEFT JOIN live_nodes l ON l.id=n.id
             LEFT JOIN door_access_points nearby ON nearby.id=i.near_id AND nearby.floor=p.floor
             ORDER BY distance_m NULLS LAST,p.id,n.id
-            SQL, [json_encode(array_values($areaIds), JSON_THROW_ON_ERROR), $floor, $mode, $gender, $lang, $nearAccessId]);
+            SQL, [
+                json_encode(array_values($areaIds), JSON_THROW_ON_ERROR), $floor, $lang, $nearAccessId,
+                $gender, $mode, $floor,
+                $gender, $mode, $floor,
+            ]);
     }
 
     public function resolve(array $point, int $floor, string $mode, string $gender, string $lang): array
