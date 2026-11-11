@@ -45,8 +45,13 @@ class AdminSectionAccess
 
     public function handle(Request $request, Closure $next): Response
     {
-        $titles = self::titlesFor($request->route()->uri(), $request->method());
-        if (!$titles || !$request->user() || !AdminAccess::hasAny($request->user(), $titles)) {
+        $uri = $request->route()->uri();
+        $titles = self::titlesFor($uri, $request->method());
+        $user = $request->user();
+        $allowed = $user && $titles && ($uri === 'api/v1/admin/navigation-settings'
+            ? AdminAccess::canManageNavigationSettings($user)
+            : AdminAccess::hasAny($user, $titles));
+        if (!$allowed) {
             return response()->json(['error' => 'FORBIDDEN', 'message' => 'Access denied'], 403);
         }
         return $next($request);
