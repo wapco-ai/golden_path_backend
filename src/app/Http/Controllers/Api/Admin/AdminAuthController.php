@@ -7,6 +7,7 @@ use App\Models\AdminAuth;
 use App\Models\AdminLoginLog;
 use App\Models\AdminRefreshToken;
 use App\Models\User;
+use App\Services\Admin\AdminAccess;
 use App\Services\JwtService;
 use App\Services\Admin\AdminService;
 use Illuminate\Http\Request;
@@ -266,6 +267,7 @@ class AdminAuthController extends Controller
             'roles'    => $roles,
             'roleTitles' => $user->adminRoles()->pluck('title')->values(),
             'permissions' => $permissions,
+            'canManageNavigationSettings' => AdminAccess::canManageNavigationSettings($user),
             'status'   => $user->status,
             'lastLoginAt' => $user->last_login_at,
             'lastLoginIp' => $user->last_login_ip,

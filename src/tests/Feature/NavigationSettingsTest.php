@@ -28,14 +28,25 @@ class NavigationSettingsTest extends TestCase
         DB::table('routing_timing_settings')->insert(['singleton' => true, 'walk_speed_mps' => 1.2,
             'navigation_policy' => json_encode($this->policy), 'navigation_version' => 1, 'navigation_updated_at' => now()]);
         Schema::create('users', function (Blueprint $t) {
-            $t->id(); $t->boolean('is_admin')->default(true); $t->boolean('is_active')->default(true);
+            $t->id(); $t->string('email')->unique(); $t->boolean('is_admin')->default(true); $t->boolean('is_active')->default(true);
             $t->string('status')->default('active'); $t->timestamp('locked_until')->nullable();
         });
-        Schema::create('admin_roles', function (Blueprint $t) { $t->id(); $t->string('title'); });
+        Schema::create('admin_roles', function (Blueprint $t) { $t->id(); $t->string('title'); $t->string('code'); });
         Schema::create('admin_user_roles', function (Blueprint $t) { $t->integer('user_id'); $t->integer('role_id'); });
-        DB::table('users')->insert([['id' => 1], ['id' => 2]]);
-        DB::table('admin_roles')->insert([['id' => 1, 'title' => AdminAccess::SUPER_TITLE], ['id' => 2, 'title' => 'مدیریت نقشه']]);
-        DB::table('admin_user_roles')->insert([['user_id' => 1, 'role_id' => 1], ['user_id' => 2, 'role_id' => 2]]);
+        Schema::create('admin_permissions', function (Blueprint $t) { $t->id(); $t->string('code'); });
+        Schema::create('admin_role_permissions', function (Blueprint $t) { $t->integer('role_id'); $t->integer('permission_id'); });
+        DB::table('users')->insert([
+            ['id' => 1, 'email' => 'oskooei@gmail.com'],
+            ['id' => 2, 'email' => 'map@example.test'],
+            ['id' => 3, 'email' => 'other-dashboard@example.test'],
+        ]);
+        DB::table('admin_roles')->insert([
+            ['id' => 1, 'title' => AdminAccess::SUPER_TITLE, 'code' => 'super_dashboard_admin'],
+            ['id' => 2, 'title' => 'مدیریت نقشه', 'code' => 'manage_map'],
+        ]);
+        DB::table('admin_user_roles')->insert([
+            ['user_id' => 1, 'role_id' => 1], ['user_id' => 2, 'role_id' => 2], ['user_id' => 3, 'role_id' => 1],
+        ]);
     }
 
     private function auth(int $id = 1): array
@@ -57,9 +68,20 @@ class NavigationSettingsTest extends TestCase
     public function test_only_authorized_administrators_can_read_admin_settings_and_write(): void
     {
         $this->putJson('/api/v1/admin/navigation-settings', $this->payload())->assertUnauthorized();
-        $this->putJson('/api/v1/admin/navigation-settings', $this->payload(), $this->auth(2))->assertForbidden();
-        $this->getJson('/api/v1/admin/navigation-settings', $this->auth(2))->assertForbidden();
+        foreach ([2, 3] as $deniedId) {
+            $this->putJson('/api/v1/admin/navigation-settings', $this->payload(), $this->auth($deniedId))->assertForbidden();
+            $this->getJson('/api/v1/admin/navigation-settings', $this->auth($deniedId))->assertForbidden();
+            $this->getJson('/api/v1/admin/auth/me', $this->auth($deniedId))->assertOk()
+                ->assertJsonPath('canManageNavigationSettings', false);
+        }
         $this->getJson('/api/v1/admin/navigation-settings', $this->auth())->assertOk();
+        $this->getJson('/api/v1/admin/auth/me', $this->auth())->assertOk()
+            ->assertJsonPath('canManageNavigationSettings', true);
+
+        DB::table('admin_user_roles')->where('user_id', 1)->update(['role_id' => 2]);
+        $this->putJson('/api/v1/admin/navigation-settings', $this->payload(), $this->auth())->assertForbidden();
+        $this->getJson('/api/v1/admin/auth/me', $this->auth())->assertOk()
+            ->assertJsonPath('canManageNavigationSettings', false);
         $this->assertSame(1, DB::table('routing_timing_settings')->value('navigation_version'));
     }
 

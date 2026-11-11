@@ -18,6 +18,12 @@ class AdminAccess
         return $user->adminRoles()->whereIn('title', $titles)->exists();
     }
 
+    public static function canManageNavigationSettings(User $user): bool
+    {
+        return $user->email === 'oskooei@gmail.com'
+            && self::hasAny($user, [self::SUPER_TITLE]);
+    }
+
     /** Administrators may manage only accounts and roles within their own authority. */
     public static function mayManage(User $actor, ?User $target, array $newTitles = []): bool
     {
