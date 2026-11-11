@@ -68,7 +68,8 @@ BEGIN
        AND to_regprocedure('public.fn_route_visibility_inside_area(bigint,smallint,geometry,geometry,double precision)') IS NOT NULL THEN
         -- Derive the prepared variants from the installed safety logic. Only
         -- polygon preparation is moved out of the per-node work.
-        definition := pg_get_functiondef('public.fn_route_line_inside_geom(geometry,geometry,double precision)'::regprocedure);
+        -- Installed helper bodies may use Windows line endings.
+        definition := replace(pg_get_functiondef('public.fn_route_line_inside_geom(geometry,geometry,double precision)'::regprocedure),chr(13),'');
         definition := pg_temp.replace_endpoint_sql(definition,$sql$fn_route_line_inside_geom(p_area geometry, p_line geometry, p_clearance_m double precision DEFAULT 0.10)$sql$,$sql$fn_route_line_inside_prepared(p_area geometry, p_prepared_core geometry, p_line geometry, p_clearance_m double precision)$sql$);
         definition := pg_temp.replace_endpoint_sql(definition,$sql$v_area := ST_MakeValid(p_area);$sql$,$sql$v_area := p_area;$sql$);
         definition := pg_temp.replace_endpoint_sql(definition,$sql$v_core := ST_Buffer(ST_MakeValid(p_area), -v_clearance, 'join=mitre');$sql$,$sql$v_core := p_prepared_core;$sql$);
@@ -76,14 +77,14 @@ BEGIN
 $sql$,$sql$$sql$);
         EXECUTE definition;
 
-        definition := pg_get_functiondef('public.fn_route_visibility_inside_area(bigint,smallint,geometry,geometry,double precision)'::regprocedure);
+        definition := replace(pg_get_functiondef('public.fn_route_visibility_inside_area(bigint,smallint,geometry,geometry,double precision)'::regprocedure),chr(13),'');
         definition := pg_temp.replace_endpoint_sql(definition,$sql$fn_route_visibility_inside_area(p_area_id bigint, p_floor smallint, p_start geometry, p_end geometry, p_clearance_m double precision DEFAULT 0.10)$sql$,$sql$fn_route_visibility_prepared(p_area_id bigint, p_start geometry, p_end geometry, p_prepared_core geometry, p_prepared_visible geometry)$sql$);
         definition := pg_temp.replace_endpoint_sql(definition,$sql$    SELECT ST_Buffer(ST_MakeValid(a.geom), -GREATEST(p_clearance_m, 0.0), 'join=mitre')
     INTO v_core FROM public.areas a WHERE a.id = p_area_id AND a.floor = p_floor;$sql$,$sql$    v_core := p_prepared_core;$sql$);
         definition := pg_temp.replace_endpoint_sql(definition,$sql$v_visible := ST_Buffer(v_core,0.0000001);$sql$,$sql$v_visible := p_prepared_visible;$sql$);
         EXECUTE definition;
 
-        definition := pg_get_functiondef('public.fn_build_intra_area_edge_geom(bigint,smallint,geometry,geometry,double precision)'::regprocedure);
+        definition := replace(pg_get_functiondef('public.fn_build_intra_area_edge_geom(bigint,smallint,geometry,geometry,double precision)'::regprocedure),chr(13),'');
         definition := pg_temp.replace_endpoint_sql(definition,$sql$fn_build_intra_area_edge_geom(p_area_id bigint, p_floor smallint, p_start geometry, p_end geometry, p_tol_m double precision DEFAULT 0.10)$sql$,$sql$fn_build_intra_area_edge_prepared(p_area_id bigint, p_floor smallint, p_start geometry, p_end geometry, p_tol_m double precision, p_prepared_area geometry, p_prepared_core geometry, p_prepared_visible geometry, p_validation_area geometry, p_validation_core geometry, p_boundary_cover geometry)$sql$);
         definition := pg_temp.replace_endpoint_sql(definition,$sql$SELECT ST_MakeValid(a.geom) INTO v_area FROM public.areas a WHERE a.id=p_area_id AND a.floor=p_floor;$sql$,$sql$v_area := p_prepared_area;$sql$);
         definition := pg_temp.replace_endpoint_sql(definition,$sql$v_core := ST_Buffer(v_area,-GREATEST(COALESCE(p_tol_m,0.10),0.0),'join=mitre');$sql$,$sql$v_core := p_prepared_core;$sql$);
