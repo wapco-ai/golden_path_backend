@@ -18,7 +18,7 @@ DECLARE
     definition text;
     graph_insert text;
     private_cte constant text := $sql$  WITH private_nodes AS MATERIALIZED (
-    SELECT n.id FROM routing_nodes n JOIN areas a ON a.id=n.area_id
+    SELECT array_agg(n.id) AS node_ids FROM routing_nodes n JOIN areas a ON a.id=n.area_id
     WHERE a.attrs #>> '{access_policy,public_access}'='false'
   )
 $sql$;
@@ -26,8 +26,18 @@ $sql$;
       SELECT 1 FROM routing_nodes n JOIN areas a ON a.id=n.area_id
       WHERE n.id IN (e.src,e.dst) AND a.attrs #>> '{access_policy,public_access}'='false'
     );$sql$;
-    new_private_filter constant text := $sql$    AND NOT EXISTS (SELECT 1 FROM private_nodes n WHERE n.id=e.src)
-    AND NOT EXISTS (SELECT 1 FROM private_nodes n WHERE n.id=e.dst);$sql$;
+    new_private_filter constant text := $sql$    AND array_position((SELECT node_ids FROM private_nodes),e.src) IS NULL
+    AND array_position((SELECT node_ids FROM private_nodes),e.dst) IS NULL;$sql$;
+    old_origin_scan constant text := $sql$  FROM search v
+  JOIN gp_origin_edges e ON e.floor_a=v.floor AND e.floor_b=v.floor AND e.ref_edge IS NOT NULL
+    AND ST_GeometryType(e.geom)='ST_LineString' AND ST_DWithin(e.geom,v.search_geom,radius_m)$sql$;
+    new_origin_scan constant text := $sql$  FROM gp_origin_edges e
+  JOIN LATERAL (
+    SELECT s.* FROM search s
+    WHERE e.floor_a=s.floor AND e.floor_b=s.floor AND e.ref_edge IS NOT NULL
+      AND ST_GeometryType(e.geom)='ST_LineString' AND ST_DWithin(e.geom,s.search_geom,radius_m)
+    OFFSET 0
+  ) v ON true$sql$;
     old_anchor constant text := $sql$  INSERT INTO gp_nearby_edges(source,target,cost,reverse_cost,floor_a,floor_b,geom,a,b,duration,reverse_duration,distance)
   SELECT -1,n.id,GREATEST(ST_Length(g.geom)/speed,0.01),-1,p_origin_floor,p_origin_floor,
     g.geom,p_origin,n.geom,ST_Length(g.geom)/speed,ST_Length(g.geom)/speed,ST_Length(g.geom)
@@ -75,6 +85,11 @@ BEGIN
         END IF;
 
         IF signature=origin_signature THEN
+            IF strpos(definition,new_origin_scan)>0 THEN
+                definition := pg_temp.replace_endpoint_sql(definition,new_origin_scan,old_origin_scan);
+            ELSIF strpos(definition,old_origin_scan)=0 THEN
+                RAISE EXCEPTION 'Unknown nearby-origin edge order';
+            END IF;
             IF strpos(definition,'  ), search AS MATERIALIZED (')>0 THEN
                 definition := pg_temp.replace_endpoint_sql(definition,'  ), search AS MATERIALIZED (','  ), search AS (');
             ELSIF strpos(definition,'  ), search AS (')=0 THEN
