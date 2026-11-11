@@ -48,6 +48,7 @@ use App\Http\Controllers\Api\EmergencyController;
 use App\Http\Controllers\Api\Admin\DashboardController;
 
 use App\Http\Controllers\Api\Admin\UserLogsController;
+use App\Http\Controllers\Api\Admin\ActivityLogsController;
 
 
 
@@ -251,6 +252,7 @@ Route::prefix('v1')->group(function () {
         // User Logs (admin)
         Route::get('admin/user-logs',        [UserLogsController::class, 'index']);
         Route::get('admin/user-logs/export', [UserLogsController::class, 'export']);
+        Route::get('admin/activity-logs', [ActivityLogsController::class, 'index']);
 
         // Guidance points CRUD (admin) - independent from routes
         Route::get('admin/guidance-points', [GuidancePointController::class, 'index']);

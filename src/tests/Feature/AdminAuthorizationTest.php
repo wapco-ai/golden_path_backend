@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Monolog\Handler\TestHandler;
 use Tests\TestCase;
 
@@ -90,6 +91,65 @@ class AdminAuthorizationTest extends TestCase
                 'mfa_enabled' => true, 'mfa_secret' => 'fixture-mfa', 'created_at' => now(), 'updated_at' => now()]);
         }
         return $this->postJson('/api/v1/admin/auth/login', ['usernameOrEmail' => 'test1', 'password' => $old])->assertOk()->json();
+    }
+
+    public function test_activity_log_report_enforces_role_and_pages_across_daily_files(): void
+    {
+        $base = sys_get_temp_dir().'/activity-report-'.Str::uuid();
+        config(['logging.channels.activity.path' => $base.'.log']);
+        Log::channel('activity')->getLogger()->setHandlers([new TestHandler]);
+        $this->beforeApplicationDestroyed(function () use ($base): void {
+            foreach (glob($base.'-*.log') as $file) {
+                unlink($file);
+            }
+        });
+
+        $makeRow = static fn ($time, $method, $status, $entity) => json_encode([
+            'message' => 'api.request',
+            'datetime' => $time,
+            'context' => [
+                'request_id' => (string) Str::uuid(),
+                'actor_id' => 4,
+                'actor_type' => 'admin',
+                'method' => $method,
+                'route' => 'api/v1/cultural-items/{id}',
+                'entity_id' => $entity,
+                'status' => $status,
+                'deleted_rows' => $method === 'DELETE' ? 1 : null,
+                'client_ip' => '192.0.2.1',
+            ],
+        ], JSON_THROW_ON_ERROR)."\n";
+
+        file_put_contents($base.'-2026-11-10.log', $makeRow('2026-11-10T12:44:59.900000+00:00', 'DELETE', 200, '890'));
+        $rows = '';
+        for ($i = 1; $i <= 51; $i++) {
+            $rows .= $makeRow('2026-11-11T11:00:00+00:00', 'GET', 200, (string) $i);
+        }
+        file_put_contents($base.'-2026-11-11.log', $rows.'partial-invalid-line');
+
+        $path = '/api/v1/admin/activity-logs';
+        $auth = fn ($id) => ['Authorization' => 'Bearer '.app(JwtService::class)->createAccessToken([
+            'sub' => $id, 'role' => 'ADMIN',
+        ])];
+        $this->getJson($path)->assertUnauthorized();
+        $this->getJson($path, $auth(3))->assertForbidden();
+        DB::table('admin_user_roles')->insert(['user_id' => 2, 'role_id' => 8]);
+        $headers = $auth(2);
+
+        $first = $this->getJson($path, $headers)->assertOk()->assertJsonCount(50, 'items')
+            ->assertJsonPath('items.0.entityId', '51')->assertJsonPath('items.49.entityId', '2');
+        $this->assertStringContainsString('no-store', $first->headers->get('Cache-Control'));
+        $this->assertStringNotContainsString('192.0.2.1', $first->getContent());
+        $cursor = $first->json('nextCursor');
+        $this->getJson($path.'?'.http_build_query(['cursor' => $cursor]), $headers)
+            ->assertOk()->assertJsonCount(2, 'items')->assertJsonPath('items.0.entityId', '1')
+            ->assertJsonPath('items.1.entityId', '890')->assertJsonPath('nextCursor', null);
+        $this->getJson($path.'?'.http_build_query([
+            'actorId' => '4', 'entityId' => '890', 'operation' => 'delete', 'result' => 'success',
+            'from' => '2026-11-10T16:14:00+03:30', 'to' => '2026-11-10T16:14:59+03:30',
+        ]), $headers)->assertOk()->assertJsonCount(1, 'items')->assertJsonPath('items.0.actorName', 'Test Admin')
+            ->assertJsonPath('items.0.deletedRows', 1);
+        $this->getJson($path.'?cursor=../../.env', $headers)->assertUnprocessable();
     }
 
     public function test_activity_log_identifies_authentication_and_cultural_deletion(): void
