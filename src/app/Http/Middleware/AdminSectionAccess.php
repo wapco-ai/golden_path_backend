@@ -21,6 +21,7 @@ class AdminSectionAccess
             'admin/admins' => ['مدیریت ادمین ها'],
             'admin/users' => ['مدیریت کاربران ثبت نام کرده', 'مدیریت کاربران'],
             'admin/user-logs' => ['مدیریت لاگ های مسیریابی'],
+            'admin/activity-logs' => ['مدیریت گزارشات'],
             'admin/categories' => ['مدیریت دسته بندی'],
             'admin/subcategories' => ['مدیریت دسته بندی'],
             'admin/pages' => ['مدیریت صفحات'],
