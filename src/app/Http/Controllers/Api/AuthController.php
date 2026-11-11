@@ -9,6 +9,7 @@ use App\Http\Resources\UserResource;
 use App\Services\ProfileService;
 use App\Services\UserTokenService;
 use App\Support\ApiError;
+use App\Support\RequestActivity;
 use Illuminate\Http\Request;
 
 class AuthController extends Controller
@@ -35,6 +36,7 @@ class AuthController extends Controller
 
         $user = $res['user'];
         $completed = $this->profiles->isProfileCompleted($user);
+        RequestActivity::identify($user);
 
         return response()->json([
             'accessToken' => $res['accessToken'],
@@ -56,6 +58,7 @@ class AuthController extends Controller
     public function logout(AuthLogoutRequest $request)
     {
         $ok = $this->tokens->logoutByRefreshToken($request->validated()['refreshToken']);
+        request()->attributes->set(RequestActivity::LOGOUT_TOKEN_MATCHED, $ok);
 
         // نیازمندی: 204 یا پیام موفقیت
         return response()->json(['message' => 'LOGOUT_SUCCESS', 'ok' => $ok], 204);

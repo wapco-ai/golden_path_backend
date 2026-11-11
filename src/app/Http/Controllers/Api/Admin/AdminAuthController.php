@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Services\Admin\AdminAccess;
 use App\Services\JwtService;
 use App\Services\Admin\AdminService;
+use App\Support\RequestActivity;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
@@ -154,6 +155,7 @@ class AdminAuthController extends Controller
 
             $roles = $user->adminRoles()->pluck('code')->values();
             $permissions = $user->adminPermissions()->pluck('code')->values();
+            RequestActivity::identify($user);
 
             return response()->json([
                 'accessToken'  => $accessToken,
@@ -236,6 +238,7 @@ class AdminAuthController extends Controller
                 'user_agent' => $ua,
                 'expires_at' => now()->addSeconds($refreshTtl),
             ]);
+            RequestActivity::identify($user);
 
             return response()->json([
                 'accessToken'  => $accessToken,
@@ -402,6 +405,7 @@ class AdminAuthController extends Controller
             $refresh->revoked_at = now();
             $refresh->save();
         }
+        $request->attributes->set(RequestActivity::LOGOUT_TOKEN_MATCHED, $refresh !== null);
 
         return response()->json([
             'message' => 'LOGOUT_SUCCESS',

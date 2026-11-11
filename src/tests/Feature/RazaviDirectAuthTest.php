@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
@@ -133,6 +134,43 @@ class RazaviDirectAuthTest extends TestCase
     private function assertNoSession(): void
     {
         $this->assertDatabaseCount('user_refresh_tokens', 0);
+    }
+
+    public function test_activity_log_attributes_public_login_refresh_and_logout(): void
+    {
+        $logPath = storage_path('logs/public-activity-test-'.Str::uuid());
+        config(['logging.channels.activity.path' => $logPath.'.log']);
+        $this->beforeApplicationDestroyed(function () use ($logPath): void {
+            foreach (glob($logPath.'-*.log') as $file) {
+                unlink($file);
+            }
+        });
+
+        $this->fakeSuccess();
+        $this->requestOtp()->assertOk();
+        $login = $this->verifyOtp()->assertOk()->json();
+        $refreshed = $this->postJson('/api/v1/auth/refresh', [
+            'refreshToken' => $login['refreshToken'],
+        ])->assertOk()->json();
+        $headers = ['Authorization' => 'Bearer '.$refreshed['accessToken']];
+        $this->postJson('/api/v1/auth/logout', ['refreshToken' => 'unknown-token'], $headers)->assertNoContent();
+        $this->postJson('/api/v1/auth/logout', ['refreshToken' => $refreshed['refreshToken']], $headers)->assertNoContent();
+
+        $files = glob($logPath.'-*.log');
+        $this->assertCount(1, $files);
+        $lines = file($files[0], FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        $events = array_map(fn ($line) => json_decode($line, true, 512, JSON_THROW_ON_ERROR), $lines);
+        $this->assertSame(['auth.login', 'auth.refresh', 'auth.logout', 'auth.logout'], array_column($events, 'message'));
+        foreach ($events as $event) {
+            $this->assertSame($login['user']['id'], $event['context']['actor_id']);
+            $this->assertSame('user', $event['context']['actor_type']);
+        }
+        $this->assertFalse($events[2]['context']['logout_token_matched']);
+        $this->assertTrue($events[3]['context']['logout_token_matched']);
+        $logged = implode("\n", $lines);
+        foreach ([self::PHONE, $login['refreshToken'], $refreshed['accessToken'], 'unknown-token'] as $privateValue) {
+            $this->assertStringNotContainsString($privateValue, $logged);
+        }
     }
 
     public function test_request_sends_documented_query_and_does_not_create_a_local_user_or_return_a_code(): void
