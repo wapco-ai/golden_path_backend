@@ -1,0 +1,12 @@
+--- a/default.conf
++++ b/default.conf
+@@ -14,3 +14,3 @@
+ gzip_min_length 1024;
+-gzip_types application/json text/plain text/css application/javascript application/xml;
++gzip_types application/json text/plain text/css application/javascript application/xml application/wasm;
+ gzip_vary on;
+@@ -32,3 +32,3 @@
+   # --- Cache static assets (very effective) ---
+-  location ~* \.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|map)$ {
++  location ~* \.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|map|wasm)$ {
+     expires 7d;
