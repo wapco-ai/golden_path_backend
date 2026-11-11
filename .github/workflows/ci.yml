@@ -110,6 +110,20 @@ jobs:
     name: multifloor-integration
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    services:
+      postgres:
+        # PostgreSQL 16, PostGIS 3.5 and pgRouting 3.7 in an isolated test database.
+        image: pgrouting/pgrouting:16-3.5-3.7@sha256:bd6d68ab68fc8aa50f8e1680e5942d781761c203d68dc5e61b0918fe113ff1db
+        env:
+          POSTGRES_DB: golden_path_connector_test
+          POSTGRES_PASSWORD: connector_test_only
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres -d golden_path_connector_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240
@@ -118,16 +132,6 @@ jobs:
           extensions: pdo_pgsql
           tools: composer:v2
           coverage: none
-      - name: Install isolated PostgreSQL and routing extensions
-        run: |
-          # The runner's Azure mirror can time out while downloading the extensions.
-          sudo sed -i 's|http://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
-            /etc/apt/sources.list.d/ubuntu.sources
-          sudo apt-get update -qq
-          sudo apt-get install -y postgresql-16 postgresql-16-postgis-3 postgresql-16-pgrouting
-          sudo systemctl start postgresql
-          sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'connector_test_only'"
-          sudo -u postgres createdb golden_path_connector_test
       - name: Load immutable baseline and versioned changes
         env:
           PGPASSWORD: connector_test_only
