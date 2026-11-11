@@ -17,7 +17,7 @@ class GuidancePointController extends Controller
     public function index(Request $request): JsonResponse
     {
         $limit = max(1, min((int) $request->query('limit', 25), 100));
-        $sort = $this->parseSort((string) $request->query('sort', 'sort_order:asc'));
+        $sort = $this->parseSort($request->query('sort'));
 
         $q = DB::table('guidance_points as gp')
             ->whereNull('gp.deleted_at')
@@ -25,7 +25,16 @@ class GuidancePointController extends Controller
 
         $this->applyFilters($q, $request);
 
-        $page = $q->orderBy($sort['column'], $sort['direction'])->paginate($limit);
+        if ($sort['column'] === 'gp.title') {
+            $q->orderByRaw("NULLIF(BTRIM(gp.title), '') COLLATE \"fa-x-icu\" {$sort['direction']} NULLS LAST");
+        } else {
+            $q->orderBy($sort['column'], $sort['direction']);
+        }
+        if ($sort['column'] !== 'gp.id') {
+            $q->orderByDesc('gp.id');
+        }
+
+        $page = $q->paginate($limit);
         $items = collect($page->items());
         $imagesByPoint = $this->loadImages($items->pluck('id')->all());
 
@@ -535,11 +544,14 @@ class GuidancePointController extends Controller
         return null;
     }
 
-    private function parseSort(string $sort): array
+    private function parseSort(mixed $sort): array
     {
-        [$column, $direction] = array_pad(explode(':', $sort, 2), 2, 'asc');
+        [$column, $direction] = array_pad(explode(':', is_string($sort) ? $sort : '', 2), 2, 'asc');
         $allowed = ['id', 'floor', 'area_id', 'title', 'sort_order', 'is_active', 'created_at', 'updated_at'];
-        $column = in_array($column, $allowed, true) ? 'gp.' . $column : 'gp.sort_order';
+        if (!in_array($column, $allowed, true)) {
+            return ['column' => 'gp.id', 'direction' => 'desc'];
+        }
+        $column = 'gp.' . $column;
         $direction = strtolower($direction) === 'desc' ? 'desc' : 'asc';
         return compact('column', 'direction');
     }
