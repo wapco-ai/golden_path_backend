@@ -53,7 +53,6 @@ BEGIN
     END IF;
 
     PERFORM public.fn_rebuild_graph_for_area(991610001,0::smallint,false,2.50,0.10);
-    PERFORM public.fn_attach_one_sided_area_access(991610001,0::smallint,0.10);
 
     SELECT count(*) INTO valid_access_count
     FROM public.routing_nodes n JOIN public.door_access_points p ON p.id=n.ref_id
@@ -85,5 +84,28 @@ BEGIN
         WHERE local_node IN (src,dst)) THEN RAISE EXCEPTION 'Closed one-sided door leaked into the live graph'; END IF;
 END;
 $check$;
+
+CREATE ROLE one_sided_graph_test_queue;
+GRANT USAGE ON SCHEMA public TO one_sided_graph_test_queue;
+GRANT SELECT ON public.areas, public.door_access_points, public.routing_connector_stops,
+    public.routing_nodes, public.routing_edges_static, public.routing_edge_areas TO one_sided_graph_test_queue;
+GRANT INSERT, DELETE ON public.routing_nodes, public.routing_edges_static TO one_sided_graph_test_queue;
+GRANT DELETE ON public.routing_edge_areas TO one_sided_graph_test_queue;
+GRANT USAGE ON SEQUENCE public.routing_nodes_id_seq, public.routing_edges_static_id_seq TO one_sided_graph_test_queue;
+GRANT EXECUTE ON FUNCTION public.fn_attach_one_sided_area_access(bigint,smallint,double precision)
+    TO one_sided_graph_test_queue;
+
+SET LOCAL ROLE one_sided_graph_test_queue;
+SELECT public.fn_attach_one_sided_area_access(991610001,0::smallint,0.10);
+RESET ROLE;
+
+DO $repeat$
+BEGIN
+    IF (SELECT count(*) FROM public.routing_edges_static
+        WHERE attrs->>'one_sided_access_id' IN ('991610012','991610013','991610016')) <> 3 THEN
+        RAISE EXCEPTION 'Repeating the attachment as the queue role must preserve one edge per access point';
+    END IF;
+END;
+$repeat$;
 
 ROLLBACK;

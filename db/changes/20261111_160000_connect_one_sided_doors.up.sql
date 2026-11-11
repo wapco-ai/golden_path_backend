@@ -17,6 +17,7 @@ DECLARE
     access_point record;
     attachment record;
     access_node_id bigint;
+    access_node_geom geometry;
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('routing-area:' || p_area_id::text, 0));
     FOR access_point IN
@@ -56,7 +57,7 @@ BEGIN
         ORDER BY access_point.geom <-> n.geom, n.id
         LIMIT 1;
 
-        SELECT n.id INTO access_node_id
+        SELECT n.id, n.geom INTO access_node_id, access_node_geom
         FROM public.routing_nodes n
         WHERE n.floor = p_floor AND n.area_id = p_area_id
           AND n.ref_table = 'door_access_points' AND n.ref_id = access_point.id;
@@ -66,9 +67,17 @@ BEGIN
         DELETE FROM public.routing_edges_static e
         WHERE e.src = access_node_id AND e.attrs->>'one_sided_access_id' = access_point.id::text;
 
-        IF attachment.node_id IS NULL THEN
+        IF access_node_id IS NOT NULL AND (attachment.node_id IS NULL
+            OR NOT ST_OrderingEquals(access_node_geom, access_point.geom)) THEN
+            -- A changed DAP needs a new node and freshly derived edges. The
+            -- queue's node permissions are SELECT, INSERT and DELETE.
             DELETE FROM public.routing_nodes n WHERE n.id = access_node_id
               AND NOT EXISTS (SELECT 1 FROM public.routing_edges_static e WHERE n.id IN (e.src, e.dst));
+            IF NOT FOUND THEN CONTINUE; END IF;
+            access_node_id := NULL;
+        END IF;
+
+        IF attachment.node_id IS NULL THEN
             CONTINUE;
         END IF;
 
@@ -76,10 +85,6 @@ BEGIN
             INSERT INTO public.routing_nodes(floor, geom, kind, ref_table, ref_id, area_id)
             VALUES (p_floor, access_point.geom, 'door_access', 'door_access_points', access_point.id, p_area_id)
             RETURNING id INTO access_node_id;
-        ELSE
-            -- Reuse the node on area rebuilds.
-            UPDATE public.routing_nodes SET geom = access_point.geom WHERE id = access_node_id
-              AND NOT ST_OrderingEquals(geom, access_point.geom);
         END IF;
 
         INSERT INTO public.routing_edges_static(floor, src, dst, geom, base_cost, door_id, attrs)
@@ -113,7 +118,7 @@ DECLARE
     endpoint_filter constant text := 'dap.needs_review IS NOT TRUE';
     endpoint_access constant text := '(dap.needs_review IS NOT TRUE OR public.fn_is_one_sided_access(dap))';
     live_filter constant text := 'COALESCE\([[:space:]]*dap\.needs_review,[[:space:]]*FALSE[[:space:]]*\) = FALSE';
-    live_access constant text := '(COALESCE(dap.needs_review, FALSE) = FALSE OR (public.fn_is_one_sided_access(dap) AND rn.area_id IN (dap.from_area, dap.to_area)))';
+    live_access constant text := '(COALESCE(dap.needs_review, FALSE) = FALSE OR (public.fn_is_one_sided_access(dap) AND rn.area_id IN (dap.from_area, dap.to_area) AND ST_OrderingEquals(rn.geom, dap.geom)))';
     area_return constant text := '(\n[ \t]+RETURN jsonb_build_object\([[:space:]]*''ok'',[[:space:]]*(true|v_nodes))';
     door_return constant text := '(''routing_source'', ''door_access_points''[[:space:]]*\))';
     affected_areas constant text := 'ON CONFLICT (area_id) DO NOTHING;';

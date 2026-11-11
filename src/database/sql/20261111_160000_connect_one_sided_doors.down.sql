@@ -16,7 +16,7 @@ DECLARE
         THEN jsonb_build_object('ok', true, 'single_sided_connected', true, 'inserted_nodes', GREATEST(v_inserted_nodes, 1))
         ELSE '{}'::jsonb END$summary$;
     endpoint_access constant text := '(dap.needs_review IS NOT TRUE OR public.fn_is_one_sided_access(dap))';
-    live_access constant text := '(COALESCE(dap.needs_review, FALSE) = FALSE OR (public.fn_is_one_sided_access(dap) AND rn.area_id IN (dap.from_area, dap.to_area)))';
+    live_access constant text := '(COALESCE(dap.needs_review, FALSE) = FALSE OR (public.fn_is_one_sided_access(dap) AND rn.area_id IN (dap.from_area, dap.to_area) AND ST_OrderingEquals(rn.geom, dap.geom)))';
 BEGIN
     SELECT pg_get_functiondef('public.fn_rebuild_graph_for_area(bigint,smallint,boolean,double precision,double precision)'::regprocedure) INTO definition;
     changed := replace(definition, area_hook, '');
