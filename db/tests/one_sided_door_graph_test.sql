@@ -70,6 +70,8 @@ BEGIN
     IF (SELECT count(*) FROM public.routing_edges_static WHERE local_node IN (src,dst)) <> 1 OR NOT EXISTS (
         SELECT 1 FROM public.routing_edges_static
         WHERE src=local_node AND dst=normal_node AND door_id IS NULL
+          AND ST_OrderingEquals(ST_StartPoint(geom),local_point)
+          AND ST_OrderingEquals(ST_EndPoint(geom),normal_point)
           AND public.fn_route_line_valid_inside_area(991610001,geom,0.10)
     ) THEN RAISE EXCEPTION 'One-sided point must have exactly one safe intra-area edge'; END IF;
 

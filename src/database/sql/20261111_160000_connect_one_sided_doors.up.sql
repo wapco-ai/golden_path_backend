@@ -32,31 +32,6 @@ BEGIN
           AND NOT EXISTS (SELECT 1 FROM public.routing_connector_stops s WHERE s.door_id = dap.door_id)
         ORDER BY dap.id
     LOOP
-        -- An attachment is a leaf of the regular area graph. Pick a safe edge
-        -- to a regular node so reviewed access points cannot create shortcuts.
-        SELECT n.id AS node_id, path.geom
-        INTO attachment
-        FROM public.routing_nodes n
-        JOIN public.door_access_points peer ON peer.id = n.ref_id AND peer.floor = n.floor
-        CROSS JOIN LATERAL (
-            SELECT ST_MakeLine(ARRAY[access_point.geom,
-                public.fn_dap_node_geom_inside_area(access_point.geom, p_area_id, p_clearance_m),
-                n.geom]) AS inset_line
-        ) candidate
-        CROSS JOIN LATERAL (
-            SELECT CASE
-                WHEN public.fn_route_line_valid_inside_area(p_area_id, candidate.inset_line, p_clearance_m)
-                    THEN candidate.inset_line
-                ELSE public.fn_build_intra_area_edge_geom(p_area_id, p_floor, access_point.geom, n.geom, p_clearance_m)
-            END AS geom OFFSET 0
-        ) path
-        WHERE n.area_id = p_area_id AND n.floor = p_floor AND n.ref_table = 'door_access_points'
-          AND peer.needs_review IS NOT TRUE AND n.area_id IN (peer.from_area, peer.to_area)
-          AND path.geom IS NOT NULL AND ST_Length(path.geom) > 0
-          AND public.fn_route_line_valid_inside_area(p_area_id, path.geom, p_clearance_m)
-        ORDER BY access_point.geom <-> n.geom, n.id
-        LIMIT 1;
-
         SELECT n.id, n.geom INTO access_node_id, access_node_geom
         FROM public.routing_nodes n
         WHERE n.floor = p_floor AND n.area_id = p_area_id
@@ -67,8 +42,7 @@ BEGIN
         DELETE FROM public.routing_edges_static e
         WHERE e.src = access_node_id AND e.attrs->>'one_sided_access_id' = access_point.id::text;
 
-        IF access_node_id IS NOT NULL AND (attachment.node_id IS NULL
-            OR NOT ST_OrderingEquals(access_node_geom, access_point.geom)) THEN
+        IF access_node_id IS NOT NULL AND NOT ST_OrderingEquals(access_node_geom, access_point.geom) THEN
             -- A changed DAP needs a new node and freshly derived edges. The
             -- queue's node permissions are SELECT, INSERT and DELETE.
             DELETE FROM public.routing_nodes n WHERE n.id = access_node_id
@@ -77,14 +51,42 @@ BEGIN
             access_node_id := NULL;
         END IF;
 
-        IF attachment.node_id IS NULL THEN
-            CONTINUE;
-        END IF;
-
         IF access_node_id IS NULL THEN
             INSERT INTO public.routing_nodes(floor, geom, kind, ref_table, ref_id, area_id)
             VALUES (p_floor, access_point.geom, 'door_access', 'door_access_points', access_point.id, p_area_id)
             RETURNING id INTO access_node_id;
+        END IF;
+
+        -- Build a leaf from two routing nodes and validate its geometry.
+        SELECT n.id AS node_id, path.geom
+        INTO attachment
+        FROM public.routing_nodes origin
+        JOIN public.routing_nodes n ON n.area_id = origin.area_id AND n.floor = origin.floor
+          AND n.ref_table = 'door_access_points' AND n.id <> origin.id
+        JOIN public.door_access_points peer ON peer.id = n.ref_id AND peer.floor = n.floor
+        CROSS JOIN LATERAL (
+            SELECT ST_MakeLine(ARRAY[origin.geom,
+                public.fn_dap_node_geom_inside_area(origin.geom, p_area_id, p_clearance_m),
+                n.geom]) AS inset_line
+        ) candidate
+        CROSS JOIN LATERAL (
+            SELECT CASE
+                WHEN public.fn_route_line_valid_inside_area(p_area_id, candidate.inset_line, p_clearance_m)
+                    THEN candidate.inset_line
+                ELSE public.fn_build_intra_area_edge_geom(p_area_id, p_floor, origin.geom, n.geom, p_clearance_m)
+            END AS geom OFFSET 0
+        ) path
+        WHERE origin.id = access_node_id
+          AND peer.needs_review IS NOT TRUE AND n.area_id IN (peer.from_area, peer.to_area)
+          AND path.geom IS NOT NULL AND ST_Length(path.geom) > 0
+          AND public.fn_route_line_valid_inside_area(p_area_id, path.geom, p_clearance_m)
+        ORDER BY origin.geom <-> n.geom, n.id
+        LIMIT 1;
+
+        IF attachment.node_id IS NULL THEN
+            DELETE FROM public.routing_nodes n WHERE n.id = access_node_id
+              AND NOT EXISTS (SELECT 1 FROM public.routing_edges_static e WHERE n.id IN (e.src, e.dst));
+            CONTINUE;
         END IF;
 
         INSERT INTO public.routing_edges_static(floor, src, dst, geom, base_cost, door_id, attrs)
@@ -107,6 +109,8 @@ RETURNS boolean LANGUAGE sql STABLE AS $$
           AND peer.floor = n.floor AND peer.area_id = n.area_id
         WHERE dap.door_id = p_door_id AND dap.floor = p_floor AND public.fn_is_one_sided_access(dap)
           AND e.base_cost > 0 AND e.geom IS NOT NULL AND NOT ST_IsEmpty(e.geom)
+          AND (e.attrs->>'safety') IS DISTINCT FROM 'unsafe_direct_fallback'
+          AND (e.attrs->>'valid_inside_area') IS DISTINCT FROM 'false'
           AND (dap.needs_review IS NOT TRUE OR e.attrs->>'one_sided_access_id' = dap.id::text)
     );
 $$;
