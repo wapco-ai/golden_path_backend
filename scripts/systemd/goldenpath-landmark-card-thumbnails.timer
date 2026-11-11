@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh GoldenPath card thumbnails
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=1min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target
