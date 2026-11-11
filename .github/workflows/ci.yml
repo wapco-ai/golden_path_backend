@@ -271,9 +271,14 @@ jobs:
         env:
           PGPASSWORD: connector_test_only
         run: |
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261111_160000_connect_one_sided_doors.up.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/tests/one_sided_door_graph_test.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261111_160000_connect_one_sided_doors.down.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261111_160000_connect_one_sided_doors.up.sql
           cd src
           vendor/bin/phpunit -c phpunit.integration.xml tests/Feature/ExplicitDoorRouteTest.php
           cd ..
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261111_160000_connect_one_sided_doors.down.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261111_150000_optimize_route_endpoints.down.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261111_140000_connector_access_by_floor.down.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261110_160000_explicit_door_endpoints.down.sql

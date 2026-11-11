@@ -36,7 +36,7 @@ class DoorRouteEndpointService
                 ST_Distance(p.geom,nearby.geom) AS distance_m,
                 CASE
                     WHEN d.is_open IS FALSE THEN 'closed'
-                    WHEN d.is_allowed IS DISTINCT FROM true OR p.needs_review IS TRUE OR l.id IS NULL THEN 'unavailable'
+                    WHEN d.is_allowed IS DISTINCT FROM true OR l.id IS NULL THEN 'unavailable'
                     ELSE 'available'
                 END AS status
             FROM access_points p CROSS JOIN input i

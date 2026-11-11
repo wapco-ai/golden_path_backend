@@ -46,14 +46,18 @@ class RebuildDoorGraphJob implements ShouldQueue, ShouldBeUnique
                     :door_id,
                     false,
                     2.50,
-                    0.20
+                    0.10
                 ) AS result",
                 [
                     'door_id' => $this->doorId,
                 ]
             );
 
-            $this->validateSingleSidedStop($row->result ?? null);
+            $result = json_decode($row->result ?? '', true);
+            if (!$this->validateSingleSidedStop($result) && !$this->graphIsComplete($result)) {
+                throw new RuntimeException('ساخت گراف کامل نشد؛ اتصال درب به مسیر داخلی محدوده را بررسی کنید. '
+                    . json_encode($result, JSON_UNESCAPED_UNICODE));
+            }
         });
 
         $this->setGraphStatus('ready');
@@ -64,7 +68,21 @@ class RebuildDoorGraphJob implements ShouldQueue, ShouldBeUnique
         $this->setGraphStatus('failed', $e->getMessage());
     }
 
-    private function validateSingleSidedStop(?string $result): bool
+    private function graphIsComplete(mixed $result): bool
+    {
+        if (!is_array($result) || ($result['ok'] ?? false) !== true || ($result['areas_rebuilt_failed'] ?? 0) > 0) {
+            return false;
+        }
+
+        if (($result['single_sided_connected'] ?? false) === true) {
+            return ($result['areas_rebuilt_ok'] ?? 0) >= 1 && ($result['areas_rebuilt_failed'] ?? null) === 0
+                && ($result['inserted_nodes'] ?? 0) >= 1 && ($result['inserted_forward_door_edges'] ?? null) === 0;
+        }
+
+        return ($result['inserted_nodes'] ?? 0) >= 2 && ($result['inserted_forward_door_edges'] ?? 0) >= 1;
+    }
+
+    private function validateSingleSidedStop(mixed $summary): bool
     {
         // A landing needs a local edge only when its area has other graph nodes.
         // In a single-node area the route can reach the landing directly.
@@ -95,10 +113,10 @@ class RebuildDoorGraphJob implements ShouldQueue, ShouldBeUnique
         }
 
         // Some graph builders report ok=false solely because there is no door transition.
-        $summary = json_decode($result ?? '', true);
         if (!$stop->connected || ($summary['inserted_nodes'] ?? 0) < 1
             || ($summary['areas_rebuilt_ok'] ?? 0) < 1 || ($summary['areas_rebuilt_failed'] ?? null) !== 0) {
-            throw new RuntimeException('اتصال گره توقف به گراف همان طبقه کامل نشد. ' . $result);
+            throw new RuntimeException('اتصال گره توقف به گراف همان طبقه کامل نشد. '
+                . json_encode($summary, JSON_UNESCAPED_UNICODE));
         }
 
         return true;
