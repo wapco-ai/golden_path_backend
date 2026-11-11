@@ -4,10 +4,43 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\UserFeedback;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 
 class CommentAdminController extends Controller
 {
+    private function comments(): Builder
+    {
+        return UserFeedback::query()
+            ->with(['user:id,name,email'])
+            ->select('user_feedbacks.*')
+            ->selectRaw(<<<'SQL'
+                CASE target_type
+                    WHEN 'poi' THEN public.fn_i18n_label('poi_points', target_id, 'name', 'fa', lang)
+                    WHEN 'content' THEN (
+                        SELECT COALESCE(NULLIF(btrim(c.title), ''),
+                            public.fn_i18n_label('poi_points', c.poi_id, 'name', 'fa', c.lang))
+                        FROM contents c WHERE c.id = user_feedbacks.target_id
+                    )
+                END AS target_title
+                SQL);
+    }
+
+    private function commentData(UserFeedback $feedback): array
+    {
+        return [
+            'id'          => (string) $feedback->id,
+            'postId'      => $feedback->target_id,
+            'postTitle'   => $feedback->target_title,
+            'authorName'  => $feedback->user?->name,
+            'authorEmail' => $feedback->user?->email,
+            'content'     => $feedback->body ?? $feedback->title ?? '',
+            'status'      => $feedback->status,
+            'createdAt'   => $feedback->created_at?->toIso8601String(),
+            'updatedAt'   => $feedback->updated_at?->toIso8601String(),
+        ];
+    }
+
     private function errorResponse(string $error, string $message, int $status = 400)
     {
         return response()->json([
@@ -55,8 +88,7 @@ class CommentAdminController extends Controller
         $sortCol   = $sortBy === 'updatedAt' ? 'updated_at' : 'created_at';
         $sortOrder = $data['sortOrder'] ?? 'desc';
 
-        $q = UserFeedback::query()
-            ->with(['user:id,name,email'])
+        $q = $this->comments()
             ->when($status, fn($qq) => $qq->where('status', $status))
             ->when($targetId, fn($qq) => $qq->where('target_id', $targetId))
             ->when(!empty($data['dateFrom']), fn($qq) => $qq->whereDate('created_at', '>=', $data['dateFrom']))
@@ -74,18 +106,7 @@ class CommentAdminController extends Controller
         $p = $q->paginate($perPage)->appends($request->query());
 
         return response()->json([
-            'data' => $p->getCollection()->map(function (UserFeedback $f) {
-                return [
-                    'id'          => (string)$f->id,
-                    'postId'      => $f->target_id, // قرارداد فرانت
-                    'authorName'  => $f->user?->name,
-                    'authorEmail' => $f->user?->email,
-                    'content'     => $f->body ?? $f->title ?? '',
-                    'status'      => $f->status,
-                    'createdAt'   => $f->created_at?->toIso8601String(),
-                    'updatedAt'   => $f->updated_at?->toIso8601String(),
-                ];
-            })->values(),
+            'data' => $p->getCollection()->map($this->commentData(...))->values(),
             'pagination' => [
                 'page'       => $p->currentPage(),
                 'perPage'    => $p->perPage(),
@@ -100,21 +121,12 @@ class CommentAdminController extends Controller
      */
     public function show(Request $request, $id)
     {
-        $f = UserFeedback::with(['user:id,name,email'])->find($id);
+        $f = $this->comments()->find($id);
         if (!$f) {
             return $this->errorResponse('NotFound', 'Comment not found.', 404);
         }
 
-        return response()->json([
-            'id'          => (string)$f->id,
-            'postId'      => $f->target_id,
-            'authorName'  => $f->user?->name,
-            'authorEmail' => $f->user?->email,
-            'content'     => $f->body ?? $f->title ?? '',
-            'status'      => $f->status,
-            'createdAt'   => $f->created_at?->toIso8601String(),
-            'updatedAt'   => $f->updated_at?->toIso8601String(),
-        ]);
+        return response()->json($this->commentData($f));
     }
 
     /**
