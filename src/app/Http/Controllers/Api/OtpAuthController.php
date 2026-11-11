@@ -14,6 +14,7 @@ use App\Services\ProfileService;
 use App\Services\PublicJwtService;
 use App\Services\RazaviAuthService;
 use App\Support\ApiError;
+use App\Support\RequestActivity;
 use Illuminate\Support\Facades\DB;
 
 class OtpAuthController extends Controller
@@ -202,6 +203,7 @@ class OtpAuthController extends Controller
         ]);
 
         $completed = $this->profiles->isProfileCompleted($user);
+        RequestActivity::identify($user);
 
         return response()->json([
             'accessToken' => $accessToken,

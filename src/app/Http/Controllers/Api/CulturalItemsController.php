@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Support\RequestActivity;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -333,6 +334,7 @@ class CulturalItemsController extends Controller
             DB::table('poi_points')->where('id', $poiId)->update(['has_content' => $hasContent]);
         });
 
+        $request->attributes->set(RequestActivity::ENTITY_ID, $poiId);
         return $this->show($request, $poiId);
     }
 
@@ -381,7 +383,7 @@ class CulturalItemsController extends Controller
             return response()->json(['message' => 'Invalid poiId'], 422);
         }
 
-        DB::transaction(function () use ($poiId) {
+        $deleted = DB::transaction(function () use ($poiId) {
             DB::table('contents')->where('poi_id', $poiId)->delete();
 
             DB::table('i18n_texts')
@@ -399,9 +401,11 @@ class CulturalItemsController extends Controller
                 ->where('entity_id', $poiId)
                 ->delete();
 
-            DB::table('poi_points')->where('id', $poiId)->delete();
+            return DB::table('poi_points')->where('id', $poiId)->delete();
         });
 
+        $request->attributes->set(RequestActivity::ENTITY_ID, $poiId);
+        $request->attributes->set(RequestActivity::DELETED_ROWS, $deleted);
         return response()->json(['success' => true]);
     }
     // ------------------------------------------------------------

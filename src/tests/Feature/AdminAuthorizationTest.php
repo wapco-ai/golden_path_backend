@@ -12,9 +12,11 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Monolog\Handler\TestHandler;
 use Tests\TestCase;
 
 class AdminAuthorizationTest extends TestCase
@@ -88,6 +90,69 @@ class AdminAuthorizationTest extends TestCase
                 'mfa_enabled' => true, 'mfa_secret' => 'fixture-mfa', 'created_at' => now(), 'updated_at' => now()]);
         }
         return $this->postJson('/api/v1/admin/auth/login', ['usernameOrEmail' => 'test1', 'password' => $old])->assertOk()->json();
+    }
+
+    public function test_activity_log_identifies_authentication_and_cultural_deletion(): void
+    {
+        $handler = new TestHandler;
+        Log::channel('activity')->getLogger()->setHandlers([$handler]);
+
+        $login = $this->passwordFixture();
+        $this->postJson('/api/v1/admin/auth/login', [
+            'usernameOrEmail' => 'test1',
+            'password' => 'incorrect-password',
+        ])->assertUnauthorized();
+        $session = $this->postJson('/api/v1/admin/auth/refresh', [
+            'refreshToken' => $login['refreshToken'],
+        ])->assertOk()->json();
+        $this->postJson('/api/v1/admin/auth/logout', [
+            'refreshToken' => $session['refreshToken'],
+        ], ['Authorization' => 'Bearer '.$session['accessToken']])->assertOk();
+
+        Schema::create('poi_points', fn (Blueprint $table) => $table->id());
+        Schema::create('contents', fn (Blueprint $table) => $table->integer('poi_id'));
+        foreach (['i18n_texts', 'access_time_restrictions', 'access_prayer_restrictions'] as $name) {
+            Schema::create($name, function (Blueprint $table) {
+                $table->string('entity_table');
+                $table->integer('entity_id');
+            });
+        }
+        DB::table('poi_points')->insert(['id' => 890]);
+        DB::table('contents')->insert(['poi_id' => 890]);
+        $this->deleteJson('/api/v1/cultural-items/890', [], [
+            'Authorization' => 'Bearer '.$session['accessToken'],
+        ])->assertForbidden();
+        $token = app(JwtService::class)->createAccessToken(['sub' => 4, 'role' => 'ADMIN']);
+        $headers = ['Authorization' => 'Bearer '.$token];
+        $this->deleteJson('/api/v1/cultural-items/890?secret=omit-this-query', [], $headers)->assertOk();
+        $this->deleteJson('/api/v1/cultural-items/890', [], $headers)->assertOk();
+
+        [$loginEvent, $failedLogin, $refresh, $logout, $denied, $deleted, $retry] = $handler->getRecords();
+        $this->assertSame('auth.login', $loginEvent->message);
+        $this->assertSame(1, $loginEvent->context['actor_id']);
+        $this->assertNull($failedLogin->context['actor_id']);
+        $this->assertSame(401, $failedLogin->context['status']);
+        $this->assertSame('auth.refresh', $refresh->message);
+        $this->assertSame(1, $refresh->context['actor_id']);
+        $this->assertSame('auth.logout', $logout->message);
+        $this->assertTrue($logout->context['logout_token_matched']);
+        $this->assertSame(1, $denied->context['actor_id']);
+        $this->assertSame(403, $denied->context['status']);
+        $this->assertSame('890', $denied->context['entity_id']);
+        $this->assertNull($denied->context['deleted_rows']);
+        $this->assertSame(4, $deleted->context['actor_id']);
+        $this->assertSame('admin', $deleted->context['actor_type']);
+        $this->assertSame('DELETE', $deleted->context['method']);
+        $this->assertSame('api/v1/cultural-items/{id}', $deleted->context['route']);
+        $this->assertSame('890', $deleted->context['entity_id']);
+        $this->assertSame(1, $deleted->context['deleted_rows']);
+        $this->assertSame(0, $retry->context['deleted_rows']);
+        $this->assertDatabaseMissing('contents', ['poi_id' => 890]);
+
+        $logged = json_encode($handler->getRecords(), JSON_THROW_ON_ERROR);
+        foreach ([$token, $login['refreshToken'], 'incorrect-password', 'omit-this-query'] as $secret) {
+            $this->assertStringNotContainsString($secret, $logged);
+        }
     }
 
     public function test_password_change_success_revokes_refresh_and_keeps_existing_access_until_expiry(): void
