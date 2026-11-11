@@ -22,6 +22,7 @@
             <file>tests/Feature/CategoryAdminWriteTest.php</file>
             <file>tests/Feature/SignedUserAdminTest.php</file>
             <file>tests/Feature/SupportFeedbackAdminTest.php</file>
+            <file>tests/Feature/CommentModerationTest.php</file>
             <file>tests/Feature/DashboardNotificationAdminTest.php</file>
             <file>tests/Feature/DashboardRecentUsersAdminTest.php</file>
             <file>tests/Feature/RazaviAuthPostgresTest.php</file>

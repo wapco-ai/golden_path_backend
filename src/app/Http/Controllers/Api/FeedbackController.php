@@ -41,6 +41,7 @@ class FeedbackController extends Controller
 
         $feedbacks = $query
             ->orderByDesc('created_at')
+            ->orderByDesc('id')
             ->paginate($limit);
 
         // خلاصه‌ی امتیاز از View یا attrs

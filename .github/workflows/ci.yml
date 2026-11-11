@@ -147,6 +147,7 @@ jobs:
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261107_110000_hide_private_area_graph.up.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261109_120000_public_engineering_map.up.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/tests/public_engineering_map_test.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261109_160000_enduser_feedback_delivery.up.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261110_090000_manual_door_display_wall.up.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f scripts/manual_door_display_wall_test.sql
       - run: composer install --no-interaction --prefer-dist --no-progress --no-scripts
