@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Services\AreaEndpointService;
 use App\Services\CulturalMapGroup;
+use App\Services\LandmarkCardImages;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -21,7 +22,7 @@ class LandmarkController extends Controller
      *  - poi_id: int (optional)    // برای Landmarkهای جدول poi_points
      *  - include_exact_areas: boolean (optional, exact public area matches for destination text search)
      */
-    public function landmarkPlaces(Request $request, AreaEndpointService $areaEndpoints)
+    public function landmarkPlaces(Request $request, AreaEndpointService $areaEndpoints, LandmarkCardImages $cardImages)
     {
         $data = $request->validate([
             'language'   => 'nullable|string|in:fa,en,ar,ur',
@@ -80,6 +81,10 @@ class LandmarkController extends Controller
             // تضمین language / generatedAt
             $payload['language']    = $payload['language']    ?? $language;
             $payload['generatedAt'] = $payload['generatedAt'] ?? now()->toIso8601String();
+            $payload['places']['landmarkPlaces'] = $cardImages->decorate(
+                $payload['places']['landmarkPlaces'],
+                $request->getHost(),
+            );
 
             return response()->json($payload);
         } catch (\Throwable $e) {
