@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Services\PublicMediaUrl;
 use App\Http\Controllers\Controller;
 use App\Support\RequestActivity;
 use Carbon\CarbonImmutable;
@@ -126,7 +127,7 @@ class CulturalItemsController extends Controller
                 $titles[$lang] = $r->title;
                 $descs[$lang]  = $r->body;
 
-                $m = $this->jsonToArray($r->media);
+                $m = PublicMediaUrl::attachments($this->jsonToArray($r->media) ?? []);
                 if (is_array($m) && count($m) > 0) {
                     if ($mediaPreview === []) {
                         $mediaPreview = $m;
@@ -264,7 +265,7 @@ class CulturalItemsController extends Controller
 
             $titles[$lang] = $r->title;
             $descs[$lang]  = $r->body;
-            $mediaByLang[$lang] = $this->jsonToArray($r->media) ?: [];
+            $mediaByLang[$lang] = PublicMediaUrl::attachments($this->jsonToArray($r->media) ?? []);
         }
 
 
@@ -592,7 +593,7 @@ class CulturalItemsController extends Controller
             ];
 
             if (array_key_exists('media', $payload)) {
-                $update['media'] = json_encode($payload['media'] ?? [], JSON_UNESCAPED_UNICODE);
+                $update['media'] = json_encode(PublicMediaUrl::attachments($payload['media'] ?? []), JSON_UNESCAPED_UNICODE);
             }
 
             $insert = $update;

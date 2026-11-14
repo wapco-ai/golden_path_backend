@@ -557,14 +557,8 @@ class CategoryAdminService
         if ($icon === '') return null;
 
         // If it's already a URL, return as-is
-        if (preg_match('#^https?://#i', $icon)) return $icon;
+        if (preg_match('#^https?://#i', $icon)) return PublicMediaUrl::from($icon);
 
-        // If it's a stored public path (uploads/...), return disk url
-        if (str_starts_with($icon, 'uploads/')) {
-            return Storage::disk('public')->url($icon);
-        }
-
-        // Otherwise treat it as an icon key (UI may choose to render internally)
-        return null;
+        return PublicMediaUrl::uploadPath($icon);
     }
 }

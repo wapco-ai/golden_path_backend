@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\Admin;
 
+use App\Services\PublicMediaUrl;
 use App\Http\Controllers\Controller;
 use App\Services\GuidancePointImageService;
 use Illuminate\Http\JsonResponse;
@@ -445,7 +446,20 @@ class GuidancePointController extends Controller
             'azimuth_deg' => ['sometimes', 'nullable', 'numeric', 'gte:0', 'lt:360'],
             'coverage_radius_m' => ['sometimes', 'required', 'numeric', 'min:0.01', 'lte:100', 'decimal:0,2'],
             'sort_order' => ['sometimes', 'integer', 'min:0'],
-            'primary_image_url' => ['sometimes', 'nullable', 'url', 'max:2048'],
+            'primary_image_url' => [
+                'sometimes', 'nullable', 'string', 'max:2048',
+                static function (string $attribute, mixed $value, \Closure $fail): void {
+                    if (!is_string($value)) {
+                        return;
+                    }
+
+                    if (PublicMediaUrl::uploadPath($value) === null && Validator::make(
+                        [$attribute => $value], [$attribute => 'url']
+                    )->fails()) {
+                        $fail('validation.url')->translate();
+                    }
+                },
+            ],
             'is_active' => ['sometimes', 'boolean'],
             'images' => ['sometimes', 'array', 'max:' . GuidancePointImageService::MAX_IMAGES],
             'images.*' => ['file', 'image', 'mimes:jpg,jpeg,png,webp', 'max:' . $maxKb],
@@ -587,9 +601,9 @@ class GuidancePointController extends Controller
             ->groupBy('point_id')
             ->map(fn($items) => $items->map(fn($img) => [
                 'id' => (int) $img->id,
-                'image_url' => $img->image_url,
+                'image_url' => PublicMediaUrl::from($img->image_url, $img->image_key),
                 'image_key' => $img->image_key,
-                'url' => $img->image_url,
+                'url' => PublicMediaUrl::from($img->image_url, $img->image_key),
                 'path' => $img->image_key,
                 'sort_order' => (int) $img->sort_order,
                 'view_orientation' => $img->view_orientation,
@@ -652,7 +666,7 @@ class GuidancePointController extends Controller
             'coverage_radius_m' => (float) $row->coverage_radius_m,
             'sort_order' => (int) $row->sort_order,
             'distance_m' => isset($row->distance_m) ? (float) $row->distance_m : null,
-            'primary_image_url' => $row->primary_image_url,
+            'primary_image_url' => PublicMediaUrl::from($row->primary_image_url),
             'images' => $images,
             'is_active' => (bool) $row->is_active,
             'created_by' => $row->created_by ? (int) $row->created_by : null,

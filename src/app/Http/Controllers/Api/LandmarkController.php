@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Services\PublicMediaUrl;
 use App\Http\Controllers\Controller;
 use App\Services\AreaEndpointService;
 use App\Services\CulturalMapGroup;
@@ -100,6 +101,15 @@ class LandmarkController extends Controller
         $categories = CulturalMapGroup::propertiesByPointId(array_column($places, 'id'));
 
         foreach ($places as $index => $place) {
+            if (is_array($place['content']['media'] ?? null)) {
+                $place['content']['media'] = PublicMediaUrl::attachments($place['content']['media']);
+            }
+            foreach (['image', 'thumbnail'] as $field) {
+                if (is_string($place[$field] ?? null)) {
+                    $place[$field] = PublicMediaUrl::from($place[$field]);
+                }
+            }
+            $places[$index] = $place;
             $category = $categories->get($place['id']);
             if ($category !== null) {
                 $places[$index] = array_replace($place, $category);
@@ -202,16 +212,14 @@ class LandmarkController extends Controller
             $payload['language']    = $payload['language']    ?? $language;
             $payload['generatedAt'] = $payload['generatedAt'] ?? now()->toIso8601String();
 
-            // ✅ Fix image.url based on current environment (APP_URL/filesystems config)
-            if (is_array($payload) && isset($payload['image']) && is_array($payload['image'])) {
-                $path = $payload['image']['path'] ?? null;
-
-                // اگر path داریم، URL را همیشه از روی دیسک public دوباره بساز
-                if ($path) {
-                    $payload['image']['url'] = Storage::disk('public')->url($path);
-                } else {
-                    // اگر path نداریم ولی url هست و localhost است، حداقل replace نکنیم (چون ممکن است CDN باشد)
-                    // (اختیاری) می‌توانی اینجا replace هم انجام بدهی
+            if (is_array($payload['image'] ?? null)) {
+                $image = $payload['image'];
+                $key = $image['path'] ?? null;
+                $url = is_string($key) && $key !== ''
+                    ? Storage::disk('public')->url($key)
+                    : PublicMediaUrl::from($image['url'] ?? null);
+                if ($url !== null) {
+                    $payload['image']['url'] = $url;
                 }
             }
 
@@ -412,7 +420,7 @@ class LandmarkController extends Controller
             $imageMatched = $bestImageDiff <= ($imageFov / 2.0);
             $imageUrl = $bestImage->image_key
                 ? Storage::disk('public')->url($bestImage->image_key)
-                : $bestImage->image_url;
+                : PublicMediaUrl::from($bestImage->image_url);
 
             return [
                 'status' => 'OK',
