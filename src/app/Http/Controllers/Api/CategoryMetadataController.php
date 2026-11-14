@@ -185,8 +185,9 @@ class CategoryMetadataController extends Controller
             $offset = 0;
         }
 
-        $baseQuery = CulturalMapGroup::joinAssignedMainGroup(DB::table('poi_points as p'))
-            ->join('categories as c_leaf', 'c_leaf.id', '=', DB::raw('COALESCE(assigned_group.id, p.category_leaf_id)'))
+        $assignedLeaf = CulturalMapGroup::assignedLeafExpression();
+        $baseQuery = CulturalMapGroup::joinAssignedCategories(DB::table('poi_points as p'))
+            ->join('categories as c_leaf', 'c_leaf.id', '=', DB::raw("COALESCE($assignedLeaf, p.category_leaf_id)"))
             ->leftJoin('categories as c_group', 'c_group.id', '=', 'c_leaf.parent_id')
             ->where('c_leaf.is_active', true)
             ->where(function ($q) {
@@ -198,7 +199,7 @@ class CategoryMetadataController extends Controller
         $poiRows = $baseQuery
             ->select(
                 'p.id as poi_id',
-                DB::raw("CASE WHEN assigned_group.id IS NOT NULL THEN 'poi-' || p.id::text ELSE p.poi_type::text END as value"),
+                DB::raw("CASE WHEN ($assignedLeaf) IS NOT NULL THEN 'poi-' || p.id::text ELSE p.poi_type::text END as value"),
                 'p.floor as floor',
                 // مختصات نقطه؛ فرض بر این است که geom در SRID=32640 است
                 DB::raw('ST_Y(ST_Transform(p.geom, 4326)) as lat'),
@@ -239,7 +240,7 @@ class CategoryMetadataController extends Controller
         foreach ($poiRows as $row) {
             $byPoi[$row->poi_id] = [
                 'poi_id'      => $row->poi_id,
-                'value'       => $row->value,       // همون poi_type
+                'value'       => $row->value,
                 'group'       => $row->group_code,  // sahn, khadamat, elevator, other, ...
                 'lat'         => $row->lat,
                 'lon'         => $row->lon,
