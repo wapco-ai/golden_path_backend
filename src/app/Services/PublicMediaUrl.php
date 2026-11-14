@@ -6,11 +6,8 @@ final class PublicMediaUrl
 {
     public static function from(?string $url, ?string $key = null): ?string
     {
-        if ($key !== null) {
-            $path = preg_replace('#^(?:\./|/)?(?:storage/)?(?=uploads/)#', '', trim($key));
-            if (str_starts_with($path, 'uploads/') && !preg_match('#[?\x00-\x1F]|\#|(?:^|/)\.{1,2}(?:/|$)#', $path) && !str_contains($path, '\\')) {
-                return '/storage/'.$path;
-            }
+        if (($path = self::uploadPath($key)) !== null) {
+            return $path;
         }
 
         if ($url === null) {
@@ -28,6 +25,22 @@ final class PublicMediaUrl
         }
 
         return $url;
+    }
+
+    public static function uploadPath(?string $key): ?string
+    {
+        if ($key === null) {
+            return null;
+        }
+
+        $path = preg_replace('#^(?:\./|/)?(?:storage/)?(?=uploads/)#', '', trim($key));
+        $decoded = rawurldecode($path);
+        if (!str_starts_with($path, 'uploads/') || str_contains($decoded, '\\')
+            || preg_match('#[\x00-\x1F?\x23]|(?:^|/)\.{1,2}(?:/|$)#', $decoded)) {
+            return null;
+        }
+
+        return '/storage/'.$path;
     }
 
     public static function attachments(array $media): array

@@ -446,7 +446,20 @@ class GuidancePointController extends Controller
             'azimuth_deg' => ['sometimes', 'nullable', 'numeric', 'gte:0', 'lt:360'],
             'coverage_radius_m' => ['sometimes', 'required', 'numeric', 'min:0.01', 'lte:100', 'decimal:0,2'],
             'sort_order' => ['sometimes', 'integer', 'min:0'],
-            'primary_image_url' => ['sometimes', 'nullable', 'url', 'max:2048'],
+            'primary_image_url' => [
+                'sometimes', 'nullable', 'string', 'max:2048',
+                static function (string $attribute, mixed $value, \Closure $fail): void {
+                    if (!is_string($value)) {
+                        return;
+                    }
+
+                    if (PublicMediaUrl::uploadPath($value) === null && Validator::make(
+                        [$attribute => $value], [$attribute => 'url']
+                    )->fails()) {
+                        $fail('validation.url')->translate();
+                    }
+                },
+            ],
             'is_active' => ['sometimes', 'boolean'],
             'images' => ['sometimes', 'array', 'max:' . GuidancePointImageService::MAX_IMAGES],
             'images.*' => ['file', 'image', 'mimes:jpg,jpeg,png,webp', 'max:' . $maxKb],
