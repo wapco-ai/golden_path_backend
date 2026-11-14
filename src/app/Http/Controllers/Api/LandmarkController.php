@@ -66,7 +66,7 @@ class LandmarkController extends Controller
                 ];
             }
 
-            $payload['places']['landmarkPlaces'] = $this->applyAssignedMainGroups($payload['places']['landmarkPlaces'] ?? []);
+            $payload['places']['landmarkPlaces'] = $this->applyAssignedCategories($payload['places']['landmarkPlaces'] ?? []);
 
             if (($data['include_exact_areas'] ?? false) && !$featured && $poiId === null && trim((string) $search) !== '') {
                 $payload['places']['landmarkPlaces'] = $areaEndpoints->includeExactMatches(
@@ -95,16 +95,14 @@ class LandmarkController extends Controller
         }
     }
 
-    private function applyAssignedMainGroups(array $places): array
+    private function applyAssignedCategories(array $places): array
     {
-        $groups = CulturalMapGroup::codesByPointId(array_column($places, 'id'));
+        $categories = CulturalMapGroup::propertiesByPointId(array_column($places, 'id'));
 
         foreach ($places as $index => $place) {
-            $group = $groups->get($place['id']);
-            if ($group !== null) {
-                $places[$index]['group'] = $group;
-                $places[$index]['subGroup'] = null;
-                $places[$index]['subGroupValue'] = 'poi-'.$place['id'];
+            $category = $categories->get($place['id']);
+            if ($category !== null) {
+                $places[$index] = array_replace($place, $category);
             }
         }
 

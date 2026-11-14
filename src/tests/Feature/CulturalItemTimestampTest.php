@@ -98,7 +98,16 @@ class CulturalItemTimestampTest extends TestCase
         );
     }
 
-    public function test_main_group_only_is_used_by_both_public_map_endpoints_for_legacy_data(): void
+    public static function assignedCategoryCases(): array
+    {
+        return [
+            'main group only' => [false],
+            'main group and subgroup' => [true],
+        ];
+    }
+
+    #[DataProvider('assignedCategoryCases')]
+    public function test_saved_category_is_used_by_public_place_endpoints(bool $withSubGroup): void
     {
         $groupId = DB::table('categories')->insertGetId([
             'code' => $this->marker, 'property_target' => 'group', 'level' => 1, 'is_active' => true,
@@ -106,7 +115,15 @@ class CulturalItemTimestampTest extends TestCase
         $oldGroupId = DB::table('categories')->insertGetId([
             'code' => $this->marker.'-old', 'property_target' => 'group', 'level' => 1, 'is_active' => true,
         ]);
-        $id = $this->poi(['grouping' => ['group_id' => (string) $groupId, 'sub_group_id' => null], 'group' => 'other']);
+        $childCode = $withSubGroup ? $this->marker.'-child' : null;
+        $childId = $withSubGroup ? DB::table('categories')->insertGetId([
+            'code' => $childCode, 'property_target' => 'subGroup', 'level' => 2,
+            'parent_id' => $groupId, 'is_active' => true,
+        ]) : null;
+        $id = $this->poi([
+            'grouping' => ['group_id' => (string) $groupId, 'sub_group_id' => $childId],
+            'group' => 'other',
+        ]);
         $this->content($id, 'fa', null);
         DB::table('poi_points')->where('id', $id)->update(['category_leaf_id' => $oldGroupId]);
 
@@ -118,13 +135,13 @@ class CulturalItemTimestampTest extends TestCase
         $this->getJson($list.'&group='.$this->marker.'-old')->assertOk()->assertJsonCount(0, 'subGroups');
         $this->getJson('/api/v1/landmark-places?poi_id='.$id)->assertOk()
             ->assertJsonPath('places.landmarkPlaces.0.group', $this->marker)
-            ->assertJsonPath('places.landmarkPlaces.0.subGroup', null)
+            ->assertJsonPath('places.landmarkPlaces.0.subGroup', $childCode)
             ->assertJsonPath('places.landmarkPlaces.0.subGroupValue', 'poi-'.$id);
         $features = $this->getJson('/api/v1/maps/geojson?floor=0')->assertOk()->json('features');
         $feature = collect($features)->firstWhere('properties.id', 'poi_points-'.$id);
         $this->assertNotNull($feature);
         $this->assertSame($this->marker, $feature['properties']['group']);
-        $this->assertNull($feature['properties']['subGroup']);
+        $this->assertSame($childCode, $feature['properties']['subGroup']);
         $this->assertSame('poi-'.$id, $feature['properties']['subGroupValue']);
     }
 

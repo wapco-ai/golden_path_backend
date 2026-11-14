@@ -68,7 +68,7 @@ class MapGeojsonController extends Controller
                 ];
             }
 
-            $geojson['features'] = $this->applyAssignedMainGroups($geojson['features'] ?? []);
+            $geojson['features'] = $this->applyAssignedCategories($geojson['features'] ?? []);
 
             return response()->json($geojson);
 
@@ -84,7 +84,7 @@ class MapGeojsonController extends Controller
         }
     }
 
-    private function applyAssignedMainGroups(array $features): array
+    private function applyAssignedCategories(array $features): array
     {
         $pointIds = [];
         foreach ($features as $index => $feature) {
@@ -94,13 +94,11 @@ class MapGeojsonController extends Controller
             }
         }
 
-        $groups = CulturalMapGroup::codesByPointId(array_values($pointIds));
+        $categories = CulturalMapGroup::propertiesByPointId(array_values($pointIds));
         foreach ($pointIds as $index => $id) {
-            $group = $groups->get($id);
-            if ($group !== null) {
-                $features[$index]['properties']['group'] = $group;
-                $features[$index]['properties']['subGroup'] = null;
-                $features[$index]['properties']['subGroupValue'] = 'poi-'.$id;
+            $category = $categories->get($id);
+            if ($category !== null) {
+                $features[$index]['properties'] = array_replace($features[$index]['properties'], $category);
             }
         }
 
