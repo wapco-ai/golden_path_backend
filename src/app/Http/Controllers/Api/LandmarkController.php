@@ -98,7 +98,16 @@ class LandmarkController extends Controller
 
     private function applyAssignedCategories(array $places): array
     {
-        $categories = CulturalMapGroup::propertiesByPointId(array_column($places, 'id'));
+        if ($places === []) {
+            return $places;
+        }
+
+        $ids = array_column($places, 'id');
+        $categories = CulturalMapGroup::propertiesByPointId($ids);
+        $placeTypes = DB::table('poi_points')
+            ->whereIn('id', $ids)
+            ->selectRaw("id, attrs #>> '{cultural,placeType}' as place_type")
+            ->pluck('place_type', 'id');
 
         foreach ($places as $index => $place) {
             if (is_array($place['content']['media'] ?? null)) {
@@ -109,6 +118,7 @@ class LandmarkController extends Controller
                     $place[$field] = PublicMediaUrl::from($place[$field]);
                 }
             }
+            $place['placeType'] = $placeTypes->get($place['id']);
             $places[$index] = $place;
             $category = $categories->get($place['id']);
             if ($category !== null) {
