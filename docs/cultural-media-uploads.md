@@ -40,3 +40,15 @@ mount and receives it on its next recreation. Nginx already permits 200 MiB
 requests. If deployment uses another PHP configuration or an external reverse
 proxy, ensure it permits a 50 MiB file plus multipart overhead as well. Deploy
 the matching frontend build so its upload hints and checks use the same limits.
+
+## Landmark card photos
+
+`GET /api/v1/landmark-places` returns same-origin paths for local uploads and
+adds `thumbnail` when a smaller WebP is available. The map home cards prefer
+that path and fall back to `image`. The original photo is used in place details.
+
+On the production host, the generator uses Ubuntu's `python3-pil` package.
+Install the generator and units in `scripts/systemd`, run the service once to
+backfill existing photos, and enable its timer for new uploads. The production
+Nginx patch in `docker/nginx/production` caches the versioned thumbnails for
+30 days. The generator publishes each derivative atomically.

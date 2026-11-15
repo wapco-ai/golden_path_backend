@@ -6,6 +6,7 @@ use App\Services\PublicMediaUrl;
 use App\Http\Controllers\Controller;
 use App\Services\AreaEndpointService;
 use App\Services\CulturalMapGroup;
+use App\Services\LandmarkCardImages;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -23,7 +24,7 @@ class LandmarkController extends Controller
      *  - include_exact_areas: boolean (optional, include public area matches in text search)
      *  - include_private_areas: boolean (optional, add private area matches to destination text search)
      */
-    public function landmarkPlaces(Request $request, AreaEndpointService $areaEndpoints)
+    public function landmarkPlaces(Request $request, AreaEndpointService $areaEndpoints, LandmarkCardImages $cardImages)
     {
         $data = $request->validate([
             'language'   => 'nullable|string|in:fa,en,ar,ur',
@@ -84,6 +85,10 @@ class LandmarkController extends Controller
             // تضمین language / generatedAt
             $payload['language']    = $payload['language']    ?? $language;
             $payload['generatedAt'] = $payload['generatedAt'] ?? now()->toIso8601String();
+            $payload['places']['landmarkPlaces'] = $cardImages->decorate(
+                $payload['places']['landmarkPlaces'],
+                $request->getHost(),
+            );
 
             return response()->json($payload);
         } catch (\Throwable $e) {
