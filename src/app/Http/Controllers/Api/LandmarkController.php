@@ -20,7 +20,8 @@ class LandmarkController extends Controller
      *  - limit: int (optional, default 2000)
      *  - geo[lat], geo[lng]: float (optional)
      *  - poi_id: int (optional)    // برای Landmarkهای جدول poi_points
-     *  - include_exact_areas: boolean (optional, exact public area matches for destination text search)
+     *  - include_exact_areas: boolean (optional, include public area matches in text search)
+     *  - include_private_areas: boolean (optional, add private area matches to destination text search)
      */
     public function landmarkPlaces(Request $request, AreaEndpointService $areaEndpoints)
     {
@@ -33,6 +34,7 @@ class LandmarkController extends Controller
             'search'     => 'nullable|string|max:100',
             'featured' => 'nullable|boolean',
             'include_exact_areas' => 'nullable|boolean',
+            'include_private_areas' => 'nullable|boolean',
         ]);
 
         $language = $data['language'] ?? 'fa';
@@ -75,6 +77,7 @@ class LandmarkController extends Controller
                     $search,
                     $language,
                     $limit,
+                    $request->boolean('include_private_areas'),
                 );
             }
 
@@ -98,7 +101,16 @@ class LandmarkController extends Controller
 
     private function applyAssignedCategories(array $places): array
     {
-        $categories = CulturalMapGroup::propertiesByPointId(array_column($places, 'id'));
+        if ($places === []) {
+            return $places;
+        }
+
+        $ids = array_column($places, 'id');
+        $categories = CulturalMapGroup::propertiesByPointId($ids);
+        $placeTypes = DB::table('poi_points')
+            ->whereIn('id', $ids)
+            ->selectRaw("id, attrs #>> '{cultural,placeType}' as place_type")
+            ->pluck('place_type', 'id');
 
         foreach ($places as $index => $place) {
             if (is_array($place['content']['media'] ?? null)) {
@@ -109,6 +121,7 @@ class LandmarkController extends Controller
                     $place[$field] = PublicMediaUrl::from($place[$field]);
                 }
             }
+            $place['placeType'] = $placeTypes->get($place['id']);
             $places[$index] = $place;
             $category = $categories->get($place['id']);
             if ($category !== null) {

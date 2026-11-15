@@ -22,7 +22,7 @@ class AreaEndpointService
         SQL;
 
     // The existing include_exact_areas option now includes partial matches too.
-    public function includeExactMatches(array $places, string $search, string $language, int $limit): array
+    public function includeExactMatches(array $places, string $search, string $language, int $limit, bool $includePrivate = false): array
     {
         $publicGroups = self::PUBLIC_GROUPS_SQL;
         $groups = [];
@@ -33,7 +33,8 @@ class AreaEndpointService
         $rows = DB::select(<<<SQL
             WITH input AS (
                 SELECT NULLIF(public.fn_place_search_key(?::text), '') AS search,
-                    ?::lang_enum AS lang, ?::jsonb AS poi_ids, ?::jsonb AS groups, ?::jsonb AS aliases
+                    ?::lang_enum AS lang, ?::jsonb AS poi_ids, ?::jsonb AS groups, ?::jsonb AS aliases,
+                    ?::boolean AS include_private
             ), area_names AS (
                 SELECT i.entity_id, i.txt
                 FROM i18n_texts i CROSS JOIN input
@@ -45,13 +46,15 @@ class AreaEndpointService
             ), candidates AS (
                 SELECT a.id, NULL::text AS group_id, a.floor, a.geom,
                     COALESCE(area_names.txt, input.aliases -> a.id::text ->> 0) AS title,
-                    input.aliases -> a.id::text AS aliases
+                    input.aliases -> a.id::text AS aliases,
+                    COALESCE(a.attrs #>> '{access_policy,public_access}' = 'false', false) AS is_private
                 FROM areas a CROSS JOIN input
                 LEFT JOIN area_names ON area_names.entity_id = a.id
-                WHERE (a.attrs #>> '{access_policy,public_access}') IS DISTINCT FROM 'false'
+                WHERE (input.include_private OR (a.attrs #>> '{access_policy,public_access}') IS DISTINCT FROM 'false')
+                  AND NOT ST_IsEmpty(a.geom)
                   AND NOT EXISTS (SELECT 1 FROM groups g WHERE a.id = ANY(g.area_ids))
                 UNION ALL
-                SELECT NULL::bigint, g.id, g.floor, g.geom, g.title, NULL::jsonb FROM groups g
+                SELECT NULL::bigint, g.id, g.floor, g.geom, g.title, NULL::jsonb, false FROM groups g
             ), pois AS (
                 SELECT p.id, p.floor, p.geom, public.fn_place_search_key(i.txt) AS title_key
                 FROM input CROSS JOIN LATERAL jsonb_array_elements_text(input.poi_ids) AS ids(id)
@@ -70,9 +73,9 @@ class AreaEndpointService
                    OR EXISTS (
                        SELECT 1 FROM unnest(a.alias_keys) AS alias(name)
                        WHERE strpos(alias.name, input.search) > 0
-                   )) AND ST_Area(a.geom) >= ?
+                   )) AND (a.is_private OR ST_Area(a.geom) >= ?)
             )
-            SELECT a.id, a.group_id, a.floor, a.title, a.exact_match, ST_Y(point.geom) AS lat, ST_X(point.geom) AS lon,
+            SELECT a.id, a.group_id, a.floor, a.title, a.exact_match, a.is_private, ST_Y(point.geom) AS lat, ST_X(point.geom) AS lon,
                 to_jsonb(g.area_ids) AS member_area_ids,
                 (SELECT jsonb_agg(p.id::text) FROM pois p
                  WHERE p.floor = a.floor AND (p.title_key = a.title_key OR p.title_key = ANY(a.alias_keys))
@@ -95,7 +98,7 @@ class AreaEndpointService
                 $search, $language, json_encode(array_column($places, 'id'), JSON_THROW_ON_ERROR),
                 json_encode($groups, JSON_THROW_ON_ERROR),
                 json_encode(config("area_endpoints.search_aliases.{$language}", []), JSON_THROW_ON_ERROR),
-                self::MIN_PICKER_AREA_M2, $limit,
+                $includePrivate ? 'true' : 'false', self::MIN_PICKER_AREA_M2, $limit,
             ]);
 
         $exactAreas = [];
@@ -120,6 +123,7 @@ class AreaEndpointService
             $area = [
                 ...$identity,
                 'kind' => 'area',
+                ...($row->is_private ? ['privateArea' => true] : []),
                 'title' => $row->title,
                 'floor' => (int) $row->floor,
                 'coordinates' => [(float) $row->lat, (float) $row->lon],

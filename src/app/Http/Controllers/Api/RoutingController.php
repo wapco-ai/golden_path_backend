@@ -59,13 +59,13 @@ class RoutingController extends Controller
                 'origin.accessId' => 'required_if:origin.type,door|integer|min:1',
                 'origin.areaId' => 'required_if:origin.type,door|integer|min:1',
 
-                'destination.type'  => 'required|string|in:coordinate,poi,door,area,qrcode',
-                'destination.id'    => 'nullable|integer',
+                'destination.type'  => 'required|string|in:coordinate,poi,door,area,qrcode,privateArea',
+                'destination.id'    => 'required_if:destination.type,privateArea|nullable|integer|min:1',
                 'destination.code'  => 'nullable|string',
                 'destination.name'  => 'nullable|string|max:255',
                 'destination.lat'   => 'nullable|numeric',
                 'destination.lon'   => 'nullable|numeric',
-                'destination.floor' => 'nullable|integer',
+                'destination.floor' => 'required_if:destination.type,privateArea|nullable|integer',
                 'destination.accessId' => 'required_if:destination.type,door|integer|min:1',
                 'destination.areaId' => 'required_if:destination.type,door|integer|min:1',
             ]);
@@ -116,7 +116,8 @@ class RoutingController extends Controller
 
             $points = ['origin' => $o, 'destination' => $d];
             foreach ($points as $side => $point) {
-                if (!in_array($point['type'], ['coordinate', 'door'], true)) {
+                $allowedTypes = $side === 'destination' ? ['coordinate', 'door', 'privateArea'] : ['coordinate', 'door'];
+                if (!in_array($point['type'], $allowedTypes, true)) {
                     $log['meta']['status'] = 'UNSUPPORTED';
                     $log['meta']['http_code'] = 422;
                     $this->insertRouteLogSafe($log, $t0);
@@ -152,6 +153,20 @@ class RoutingController extends Controller
             foreach ($points as $side => $point) {
                 if ($point['type'] === 'coordinate') {
                     $resolved[$side] = ['lat' => (float) $point['lat'], 'lon' => (float) $point['lon']];
+                    continue;
+                }
+                if ($point['type'] === 'privateArea') {
+                    $area = DB::selectOne(<<<'SQL'
+                        SELECT ST_X(point.geom) AS lon, ST_Y(point.geom) AS lat
+                        FROM areas a
+                        CROSS JOIN LATERAL (SELECT ST_Transform(ST_PointOnSurface(a.geom),4326) AS geom) point
+                        WHERE a.id = ? AND a.floor = ? AND a.attrs #>> '{access_policy,public_access}' = 'false'
+                          AND NOT ST_IsEmpty(a.geom)
+                        SQL, [$point['id'], $destinationFloor]);
+                    if (!$area) {
+                        throw ValidationException::withMessages(['destination.id' => 'محدودهٔ خصوصی در طبقهٔ انتخاب‌شده پیدا نشد.']);
+                    }
+                    $resolved[$side] = ['lat' => (float) $area->lat, 'lon' => (float) $area->lon, 'privateAreaId' => (int) $point['id']];
                     continue;
                 }
                 $endpoint = $doorEndpoints->resolve($point, $side === 'origin' ? $originFloor : $destinationFloor, $mode, $gender, $lang);
@@ -215,6 +230,7 @@ class RoutingController extends Controller
                         'name' => $d['name'] ?? null,
                         'coordinates' => [$destLat, $destLon],
                         'floor' => $destinationFloor,
+                        ...($d['type'] === 'privateArea' ? ['privateArea' => true, 'areaId' => (int) $d['id']] : []),
                         ...($d['type'] === 'door' ? ['door' => ['accessId' => (int) $d['accessId'], 'selectedAreaId' => (int) $d['areaId']]] : []),
                     ],
                     'capture_version' => 1,

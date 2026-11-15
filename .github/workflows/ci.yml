@@ -270,6 +270,14 @@ jobs:
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261111_150000_optimize_route_endpoints.down.sql
           psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261111_150000_optimize_route_endpoints.up.sql
 
+      - name: Verify private destination routing and rollback
+        env:
+          PGPASSWORD: connector_test_only
+        run: |
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261114_160000_private_area_destinations.up.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/tests/private_area_destinations_test.sql
+          psql -h 127.0.0.1 -U postgres -d golden_path_connector_test -v ON_ERROR_STOP=1 -f db/changes/20261114_160000_private_area_destinations.down.sql
+
       - name: Same-floor stair HTTP and routing tests
         run: vendor/bin/phpunit -c phpunit.integration.xml --testsuite SameFloorStairs
         working-directory: src
