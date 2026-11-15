@@ -48,6 +48,14 @@ adds `thumbnail` when a smaller WebP is available. The map home cards prefer
 that path and fall back to `image`. The original photo is used in place details.
 
 On the production host, the generator uses Ubuntu's `python3-pil` package.
+Before starting the service for the first time, create its writable directory
+so systemd can bind it into the service sandbox:
+
+```sh
+sudo install -d -o www-data -g www-data -m 0755 \
+  /opt/golden_path_stack/src/docker-data/uploads/card-thumbnails-v1
+```
+
 Install the generator and units in `scripts/systemd`, run the service once to
 backfill existing photos, and enable its timer for new uploads. The production
 Nginx patch in `docker/nginx/production` caches the versioned thumbnails for
