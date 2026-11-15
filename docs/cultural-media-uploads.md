@@ -40,3 +40,43 @@ mount and receives it on its next recreation. Nginx already permits 200 MiB
 requests. If deployment uses another PHP configuration or an external reverse
 proxy, ensure it permits a 50 MiB file plus multipart overhead as well. Deploy
 the matching frontend build so its upload hints and checks use the same limits.
+
+## Landmark card photos
+
+`GET /api/v1/landmark-places` returns same-origin paths for local uploads and
+adds `thumbnail` when a smaller WebP is available. The map home cards prefer
+that path and fall back to `image`. The original photo is used in place details.
+
+Deploy the backend before the frontend. For the IP-hosted stack, retain the
+persistent uploads mount, the live Nginx configuration and the enabled
+thumbnail timer during code and container releases. The GitHub Pages build is
+independent of the IP-hosted stack.
+
+On first provisioning or when rebuilding the production host, install Ubuntu's
+`python3-pil` package and run the following from the backend checkout.
+
+```bash
+root=/opt/golden_path_stack
+sudo install -d -m 0755 "$root/scripts"
+sudo install -m 0644 scripts/generate_landmark_card_thumbnails.py "$root/scripts/"
+sudo install -d -m 0755 -o www-data -g www-data \
+  "$root/src/docker-data/uploads/card-thumbnails-v1"
+sudo install -m 0644 scripts/systemd/goldenpath-landmark-card-thumbnails.{service,timer} \
+  /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl start goldenpath-landmark-card-thumbnails.service
+sudo systemctl enable --now goldenpath-landmark-card-thumbnails.timer
+```
+
+If the live Nginx config is replaced, apply
+`docker/nginx/production/landmark-card-thumbnails.patch` to the production
+`default.conf`. Check the patch against the current config, back it up, and
+prepare the patched file separately. Write the candidate into the existing
+bind-mounted file to preserve its inode. Run `docker exec gp_nginx nginx -t`
+before `docker exec gp_nginx nginx -s reload`. Restore the backup in place if
+validation fails.
+
+After rollout, check `systemctl is-active goldenpath-landmark-card-thumbnails.timer`
+and search for `چایخانه` on the production IP over HTTP and HTTPS. The four
+cards should use the same thumbnail paths. Responses should be `image/webp`
+with `Cache-Control: public, max-age=2592000, immutable`.
