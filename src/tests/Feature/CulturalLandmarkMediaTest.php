@@ -71,7 +71,7 @@ class CulturalLandmarkMediaTest extends TestCase
         $this->assertSame('khadamati', $this->place($service)['placeType']);
         $this->assertNull($this->place($legacy)['placeType']);
 
-        $places = $this->getJson('/api/v1/landmark-places?language=fa&search='.rawurlencode('عنوان فرهنگی'))
+        $places = $this->getJson('/api/v1/landmark-places?language=fa&search='.rawurlencode('آزمون رسانه فرهنگی'))
             ->assertOk()->json('places.landmarkPlaces');
         $placesById = array_column($places, null, 'id');
         $this->assertSame('ziyarati', $placesById[$pilgrimage]['placeType']);
