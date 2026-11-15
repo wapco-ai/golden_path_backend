@@ -1,0 +1,14 @@
+[Unit]
+Description=Generate GoldenPath card thumbnails
+
+[Service]
+Type=oneshot
+User=www-data
+Group=www-data
+Nice=10
+ExecStart=/usr/bin/python3 /run/goldenpath-card-thumbnails/generate.py /run/goldenpath-card-thumbnails
+ProtectSystem=strict
+RuntimeDirectory=goldenpath-card-thumbnails
+BindReadOnlyPaths=/opt/golden_path_stack/scripts/generate_landmark_card_thumbnails.py:/run/goldenpath-card-thumbnails/generate.py
+BindReadOnlyPaths=/opt/golden_path_stack/src/docker-data/uploads/contents:/run/goldenpath-card-thumbnails/contents
+BindPaths=/opt/golden_path_stack/src/docker-data/uploads/card-thumbnails-v1:/run/goldenpath-card-thumbnails/card-thumbnails-v1
