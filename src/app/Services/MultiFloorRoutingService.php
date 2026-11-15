@@ -14,6 +14,20 @@ class MultiFloorRoutingService
                 ST_Transform(ST_SetSRID(ST_MakePoint(?::float8,?::float8),4326),32640)';
             $bindings = [$gender, $mode, $originFloor, $destinationFloor, $origin['lon'], $origin['lat'], $destination['lon'], $destination['lat']];
             $originNode = $origin['node'] ?? null;
+            if (isset($destination['privateAreaId'])) {
+                $rows = $this->selectEdges(
+                    "fn_route_private_area_edges(now(), ?::gender_enum, ?::text, ?::smallint, ?::smallint,
+                        ST_Transform(ST_SetSRID(ST_MakePoint(?::float8,?::float8),4326),32640), ?::bigint, ?::bigint)",
+                    [$gender, $mode, $originFloor, $destinationFloor, $origin['lon'], $origin['lat'], $destination['privateAreaId'], $originNode]
+                );
+
+                return $rows ? $this->privateAreaRoute($rows, $mode, $lang, $destinationName) : [
+                    'status' => 'NO_PATH',
+                    'message' => 'مسیر قابل‌دسترسی تا نزدیکی این محدوده پیدا نشد.',
+                    'steps' => [],
+                    'alternatives' => [],
+                ];
+            }
             $destinationNode = $destination['node'] ?? null;
             $explicitDoor = $originNode !== null || $destinationNode !== null;
             $allowNearbyDestination = $allowNearbyDestination && !$explicitDoor;
@@ -91,6 +105,32 @@ class MultiFloorRoutingService
                 AND route_edges.to_node IN (stair.src, stair.dst)
             ORDER BY route_edges.path_id, route_edges.path_seq
         ", $bindings);
+    }
+
+    private function privateAreaRoute(array $rows, string $mode, string $lang, ?string $destinationName): array
+    {
+        $route = $this->assemble($rows, $mode, $lang);
+        $last = array_key_last($route['steps']);
+        $step = $route['steps'][$last];
+        $edge = $rows[array_key_last($rows)];
+        $atConnection = $edge->terminal_kind === 'connection';
+        $route['steps'][$last]['instruction'] = $atConnection ? match ($lang) {
+            'en' => 'You have reached the access point for '.($destinationName ?: 'the private area').'.',
+            'ar' => 'وصلت إلى نقطة الاتصال بـ'.($destinationName ?: 'المنطقة الخاصة').'.',
+            'ur' => 'آپ '.($destinationName ?: 'نجی علاقے').' کے رسائی مقام پر پہنچ گئے ہیں۔',
+            default => 'به نقطهٔ اتصال '.($destinationName ?: 'محدودهٔ خصوصی').' رسیدید.',
+        } : $this->nearbyArrivalInstruction($lang, $destinationName);
+        $route['geo']['properties']['nearbyDestination'] = [
+            'coordinates' => [$step['coord']['lat'], $step['coord']['lon']],
+            'floor' => $step['floor'],
+            'kind' => $edge->terminal_kind,
+            'label' => (new RouteEndpointLabelService())->find(
+                $step['coord']['lat'], $step['coord']['lon'], $step['floor'], $lang, $edge->edge_id
+            ),
+        ];
+        $route['alternatives'] = [];
+
+        return $route;
     }
 
     private function nearbyArrivalInstruction(string $lang, ?string $destinationName): string
