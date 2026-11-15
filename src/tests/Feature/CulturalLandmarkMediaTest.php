@@ -61,6 +61,23 @@ class CulturalLandmarkMediaTest extends TestCase
         ]))->assertOk()->assertJsonCount(1, 'places.landmarkPlaces')->json('places.landmarkPlaces.0');
     }
 
+    public function test_public_landmarks_expose_the_cultural_type_even_without_an_assigned_map_group(): void
+    {
+        $pilgrimage = $this->poi([], ['cultural' => ['placeType' => 'ziyarati']]);
+        $service = $this->poi([], ['cultural' => ['placeType' => 'khadamati']]);
+        $legacy = $this->poi([]);
+
+        $this->assertSame('ziyarati', $this->place($pilgrimage)['placeType']);
+        $this->assertSame('khadamati', $this->place($service)['placeType']);
+        $this->assertNull($this->place($legacy)['placeType']);
+
+        $places = $this->getJson('/api/v1/landmark-places?language=fa&search='.rawurlencode('آزمون رسانه فرهنگی'))
+            ->assertOk()->json('places.landmarkPlaces');
+        $placesById = array_column($places, null, 'id');
+        $this->assertSame('ziyarati', $placesById[$pilgrimage]['placeType']);
+        $this->assertSame('khadamati', $placesById[$service]['placeType']);
+    }
+
     public function test_video_first_keeps_complete_media_but_selects_the_real_image_in_sql_and_http(): void
     {
         $media = [
