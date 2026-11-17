@@ -505,8 +505,8 @@ class CulturalItemsController extends Controller
             'grouping.sub_group_label' => ['nullable'],
 
             'location' => ['sometimes', 'nullable', 'array'],
-            'location.lat' => ['required_with:location', 'numeric'],
-            'location.lng' => ['required_with:location', 'numeric'],
+            'location.lat' => ['required_with:location', 'numeric', 'between:-90,90'],
+            'location.lng' => ['required_with:location', 'numeric', 'between:-180,180'],
             'placeType' => ['sometimes', 'string', Rule::in($placeTypes)],
 
             'floor' => ['sometimes', 'nullable', 'integer'],
@@ -540,8 +540,8 @@ class CulturalItemsController extends Controller
             'poi.category_leaf_id' => ['sometimes', 'nullable', 'integer'], // اگر ستونش را داری
 
             'poi.location' => ['required_without:poi_id', 'array'],
-            'poi.location.lat' => ['required_without:poi_id', 'numeric'],
-            'poi.location.lng' => ['required_without:poi_id', 'numeric'],
+            'poi.location.lat' => ['required_without:poi_id', 'numeric', 'between:-90,90'],
+            'poi.location.lng' => ['required_without:poi_id', 'numeric', 'between:-180,180'],
 
             'poi.addressInShrine' => ['sometimes', 'nullable', 'string'],
             'poi.grouping' => ['sometimes', 'nullable', 'array'],
