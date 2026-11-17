@@ -29,6 +29,13 @@ class AreaDoorsController extends Controller
     {
         // 1) اعتبارسنجی ورودی
         $data = $request->validate([
+            'target' => 'nullable|in:origin,destination',
+            'origin' => 'nullable|array:lat,lon,floor,accessId,areaId',
+            'origin.floor' => 'required_with:origin|integer|between:-32768,32767',
+            'origin.lat' => 'required_with:origin|numeric|between:-90,90',
+            'origin.lon' => 'required_with:origin|numeric|between:-180,180',
+            'origin.accessId' => 'required_with:origin.areaId|integer|min:1',
+            'origin.areaId' => 'required_with:origin.accessId|integer|min:1',
             'area_id' => 'nullable|integer|min:1|prohibits:area_group_id',
             'area_group_id' => 'nullable|string|max:100',
             'lat'     => 'required_without_all:area_id,area_group_id|nullable|numeric',
@@ -41,10 +48,13 @@ class AreaDoorsController extends Controller
 
         $lang = $data['lang'] ?? 'fa';
 
+        $destination = ($data['target'] ?? null) === 'destination';
+        $mode = $data['mode'] ?? 'walk';
+        $gender = $data['gender'] ?? 'both';
         $areaId = $data['area_id'] ?? null;
         $areaGroupId = $data['area_group_id'] ?? null;
         $rawPayload = $areaId !== null || $areaGroupId !== null
-            ? $areaEndpoints->doors($areaId, $lang, $data['floor'] ?? null, $areaGroupId)
+            ? $areaEndpoints->doors($areaId, $lang, $data['floor'] ?? null, $areaGroupId, $destination)
             : DB::selectOne("
             SELECT fn_area_doors_clockwise_json(
                 ST_Transform(
@@ -86,7 +96,10 @@ class AreaDoorsController extends Controller
             $areaM2 = floatval($area['areaM2']);
         }
 
-        if ($areaM2 !== null && $areaM2 < AreaEndpointService::MIN_PICKER_AREA_M2) {
+        $ids = array_map('intval', $area['memberAreaIds'] ?? [$area['id']]);
+        $floor = (int) $area['floor'];
+        $denied = $destination ? $doorEndpoints->deniedAreas($ids, $floor, $mode, $gender) : [];
+        if (!$denied && $areaM2 !== null && $areaM2 < AreaEndpointService::MIN_PICKER_AREA_M2) {
             return response()->json([
                 'status'  => 'area_too_small',
                 'message' => 'مساحت محدودهٔ انتخابی کمتر از ۱۰۰ متر مربع است و برای این سرویس در نظر گرفته نمی‌شود.',
@@ -96,9 +109,23 @@ class AreaDoorsController extends Controller
             ], 400);
         }
 
-        if (!empty($payload['doors']) && (isset($data['mode']) || isset($data['gender']))) {
-            $ids = array_map('intval', $area['memberAreaIds'] ?? [$area['id']]);
-            $statuses = collect($doorEndpoints->forAreas($ids, (int) $area['floor'], $data['mode'] ?? 'walk', $data['gender'] ?? 'both', $lang))
+        if ($destination) $payload['restrictedArea'] = (bool) $denied;
+
+        if (!empty($payload['doors']) && ($destination || isset($data['mode']) || isset($data['gender']))) {
+            $reachable = [];
+            if ($denied && !empty($data['origin'])) {
+                $origin = $data['origin'];
+                $start = isset($origin['accessId'])
+                    ? $doorEndpoints->resolve($origin, (int) $origin['floor'], $mode, $gender, $lang)
+                    : $origin;
+                if (!isset($start['reason'])) {
+                    $reachable = app(\App\Services\MultiFloorRoutingService::class)->reachableEntrances(
+                        $gender, $mode, (int) $origin['floor'], $floor, $start, $ids);
+                }
+            }
+            $payload['requiresOrigin'] = $denied && empty($data['origin']);
+            $permitted = array_values(array_diff($ids, $denied));
+            $statuses = collect($permitted ? $doorEndpoints->forAreas($permitted, $floor, $mode, $gender, $lang) : [])
                 ->keyBy(fn ($row) => $row->access_id.':'.$row->area_id);
             foreach ($payload['doors'] as &$door) {
                 $fromArea = (int) ($door['fromAreaId'] ?? 0);
@@ -108,6 +135,10 @@ class AreaDoorsController extends Controller
                 $door['selectedAreaId'] = $selectedArea;
                 $door['routingStatus'] = $status?->status ?? 'unavailable';
                 $door['routingName'] = $status?->name;
+                if (in_array($selectedArea, $denied, true)) {
+                    $door['approachOnly'] = true;
+                    $door['routingStatus'] = in_array((int) $door['accessId'], $reachable, true) ? 'available' : 'unavailable';
+                }
             }
             unset($door);
         }

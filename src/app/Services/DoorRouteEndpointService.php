@@ -6,6 +6,18 @@ use Illuminate\Support\Facades\DB;
 
 class DoorRouteEndpointService
 {
+    public function deniedAreas(array $ids, int $floor, string $mode, string $gender): array
+    {
+        $rows = DB::select(<<<'SQL'
+            SELECT a.id FROM areas a
+            LEFT JOIN fn_allowed_areas(now(),?::gender_enum,?::text,?::smallint) ok
+                ON ok.id=a.id AND ok.is_allowed
+            WHERE a.floor=? AND a.id IN (SELECT value::bigint FROM jsonb_array_elements_text(?::jsonb))
+                AND (ok.id IS NULL OR a.attrs #>> '{access_policy,public_access}'='false')
+            SQL, [$gender, $mode, $floor, $floor, json_encode($ids, JSON_THROW_ON_ERROR)]);
+        return array_map(fn ($row) => (int) $row->id, $rows);
+    }
+
     /** Eligibility on the chosen side of each DAP, using the live routing graph. */
     public function forAreas(array $areaIds, int $floor, string $mode, string $gender, string $lang, ?int $nearAccessId = null): array
     {

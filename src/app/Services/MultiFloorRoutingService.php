@@ -6,6 +6,23 @@ use Illuminate\Support\Facades\DB;
 
 class MultiFloorRoutingService
 {
+    private const APPROACH_EDGES = 'fn_restricted_door_edges(now(),?::gender_enum,?::text,?::smallint,?::smallint,
+        ST_Transform(ST_SetSRID(ST_MakePoint(?::float8,?::float8),4326),32640),?::bigint,
+        ARRAY(SELECT value::bigint FROM jsonb_array_elements_text(?::jsonb)),?::bigint)';
+
+    private function approachBindings(string $gender, string $mode, int $originFloor, int $floor, array $origin, array $ids, ?int $accessId): array
+    {
+        return [$gender, $mode, $originFloor, $floor, $origin['lon'], $origin['lat'], $origin['node'] ?? null,
+            json_encode(array_values($ids), JSON_THROW_ON_ERROR), $accessId];
+    }
+
+    public function reachableEntrances(string $gender, string $mode, int $originFloor, int $floor, array $origin, array $ids): array
+    {
+        $bindings = $this->approachBindings($gender, $mode, $originFloor, $floor, $origin, $ids, null);
+        $rows = DB::select('SELECT access_id FROM '.self::APPROACH_EDGES, $bindings);
+        return array_map(fn ($row) => (int) $row->access_id, $rows);
+    }
+
     public function route(string $gender, string $mode, int $originFloor, int $destinationFloor, array $origin, array $destination, string $lang, int $alternatives, bool $allowNearbyDestination = false, ?string $destinationName = null): array
     {
         return DB::transaction(function () use ($gender, $mode, $originFloor, $destinationFloor, $origin, $destination, $lang, $alternatives, $allowNearbyDestination, $destinationName) {
@@ -14,6 +31,32 @@ class MultiFloorRoutingService
                 ST_Transform(ST_SetSRID(ST_MakePoint(?::float8,?::float8),4326),32640)';
             $bindings = [$gender, $mode, $originFloor, $destinationFloor, $origin['lon'], $origin['lat'], $destination['lon'], $destination['lat']];
             $originNode = $origin['node'] ?? null;
+            if (isset($destination['approachAreaId'])) {
+                $bindings = $this->approachBindings($gender, $mode, $originFloor, $destinationFloor, $origin,
+                    [$destination['approachAreaId']], $destination['accessId']);
+                $rows = $this->selectEdges(self::APPROACH_EDGES, $bindings);
+                if (!$rows) return ['status' => 'NO_PATH', 'steps' => [], 'alternatives' => []];
+                $route = $this->assemble($rows, $mode, $lang);
+                $last = array_key_last($route['steps']);
+                $route['steps'][$last]['instruction'] = match ($lang) {
+                    'en' => 'You have reached the outside of the selected entrance.',
+                    'ar' => 'وصلت إلى الجانب الخارجي للمدخل المحدد.',
+                    'ur' => 'آپ منتخب دروازے کے باہر پہنچ گئے ہیں۔',
+                    default => 'به مقابل ورودی انتخاب‌شده رسیدید.',
+                };
+                $first = json_decode($rows[0]->from_point, true)['coordinates'];
+                if (abs($first[0] - $origin['lon']) > 1e-7 || abs($first[1] - $origin['lat']) > 1e-7) {
+                    $route['geo']['properties']['nearbyOrigin'] = [
+                        'coordinates' => [$first[1], $first[0]], 'floor' => $originFloor,
+                        'label' => (new RouteEndpointLabelService())->find($first[1], $first[0], $originFloor, $lang, $rows[0]->edge_id),
+                    ];
+                }
+                $route['geo']['properties']['entranceApproach'] = [
+                    'areaId' => $destination['approachAreaId'], 'accessId' => $destination['accessId'],
+                ];
+                $route['alternatives'] = [];
+                return $route;
+            }
             if (isset($destination['privateAreaId'])) {
                 $rows = $this->selectEdges(
                     "fn_route_private_area_edges(now(), ?::gender_enum, ?::text, ?::smallint, ?::smallint,
@@ -102,7 +145,7 @@ class MultiFloorRoutingService
                 ON stair.id = route_edges.edge_id
                 AND stair.attrs->>'edge_type' = 'same_floor_stair'
                 AND route_edges.from_node IN (stair.src, stair.dst)
-                AND route_edges.to_node IN (stair.src, stair.dst)
+                AND (route_edges.to_node IN (stair.src, stair.dst) OR route_edges.to_node < -2)
             ORDER BY route_edges.path_id, route_edges.path_seq
         ", $bindings);
     }
