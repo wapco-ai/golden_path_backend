@@ -75,7 +75,9 @@ class AreaEndpointService
                        WHERE strpos(alias.name, input.search) > 0
                    )) AND (a.is_private OR ST_Area(a.geom) >= ?)
             )
-            SELECT a.id, a.group_id, a.floor, a.title, a.exact_match, a.is_private, ST_Y(point.geom) AS lat, ST_X(point.geom) AS lon,
+            SELECT a.id, a.group_id, a.floor, a.title, a.exact_match, a.is_private,
+                (a.is_private AND EXISTS (SELECT 1 FROM door_access_points p WHERE p.floor=a.floor
+                    AND a.id IN (p.from_area,p.to_area))) AS has_approach_doors, ST_Y(point.geom) AS lat, ST_X(point.geom) AS lon,
                 to_jsonb(g.area_ids) AS member_area_ids,
                 (SELECT jsonb_agg(p.id::text) FROM pois p
                  WHERE p.floor = a.floor AND (p.title_key = a.title_key OR p.title_key = ANY(a.alias_keys))
@@ -123,7 +125,7 @@ class AreaEndpointService
             $area = [
                 ...$identity,
                 'kind' => 'area',
-                ...($row->is_private ? ['privateArea' => true] : []),
+                ...($row->is_private ? ['privateArea' => true, 'hasApproachDoors' => (bool) $row->has_approach_doors] : []),
                 'title' => $row->title,
                 'floor' => (int) $row->floor,
                 'coordinates' => [(float) $row->lat, (float) $row->lon],
@@ -156,7 +158,7 @@ class AreaEndpointService
         return array_slice([...$results, ...array_slice($pois, count($partialAreas))], 0, $limit);
     }
 
-    public function doors(?int $areaId, string $language, ?int $floor, ?string $areaGroupId = null): ?string
+    public function doors(?int $areaId, string $language, ?int $floor, ?string $areaGroupId = null, bool $includePrivate = false): ?string
     {
         $registry = config('area_endpoints.groups', []);
         $groups = [];
@@ -188,7 +190,7 @@ class AreaEndpointService
                 SELECT a.id, NULL::text AS group_id, ARRAY[a.id] AS area_ids, a.floor, a.geom,
                     fn_i18n_label('areas', a.id, 'name', input.lang, 'fa') AS name
                 FROM areas a JOIN input ON input.area_id = a.id
-                WHERE (a.attrs #>> '{access_policy,public_access}') IS DISTINCT FROM 'false'
+                WHERE (?::boolean OR (a.attrs #>> '{access_policy,public_access}') IS DISTINCT FROM 'false')
                   AND (input.floor IS NULL OR a.floor = input.floor)
                   AND NOT EXISTS (SELECT 1 FROM selected_group)
                 UNION ALL
@@ -250,6 +252,6 @@ class AreaEndpointService
             ) AS payload
             FROM area a
             CROSS JOIN LATERAL (SELECT ST_Transform(a.geom, 4326) AS geom, ST_Transform(a.center, 4326) AS center) map
-            SQL, [$areaId, $language, $floor, json_encode($groups, JSON_THROW_ON_ERROR)])?->payload;
+            SQL, [$areaId, $language, $floor, json_encode($groups, JSON_THROW_ON_ERROR), $includePrivate ? 'true' : 'false'])?->payload;
     }
 }

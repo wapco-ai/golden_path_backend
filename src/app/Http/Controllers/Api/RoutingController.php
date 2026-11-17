@@ -169,6 +169,18 @@ class RoutingController extends Controller
                     $resolved[$side] = ['lat' => (float) $area->lat, 'lon' => (float) $area->lon, 'privateAreaId' => (int) $point['id']];
                     continue;
                 }
+                if ($side === 'destination' && $doorEndpoints->deniedAreas([(int) $point['areaId']], $destinationFloor, $mode, $gender)) {
+                    $dap = DB::selectOne(<<<'SQL'
+                        SELECT ST_Y(g.point) AS lat, ST_X(g.point) AS lon FROM door_access_points p
+                        CROSS JOIN LATERAL (SELECT ST_Transform(p.geom,4326) AS point) g
+                        WHERE p.id=? AND p.floor=? AND ?::bigint IN (p.from_area,p.to_area)
+                        SQL, [$point['accessId'], $destinationFloor, $point['areaId']]);
+                    if ($dap) {
+                        $resolved[$side] = ['lat' => (float) $dap->lat, 'lon' => (float) $dap->lon,
+                            'approachAreaId' => (int) $point['areaId'], 'accessId' => (int) $point['accessId']];
+                        continue;
+                    }
+                }
                 $endpoint = $doorEndpoints->resolve($point, $side === 'origin' ? $originFloor : $destinationFloor, $mode, $gender, $lang);
                 if (isset($endpoint['reason'])) {
                     $log['meta']['status'] = 'DOOR_UNAVAILABLE';

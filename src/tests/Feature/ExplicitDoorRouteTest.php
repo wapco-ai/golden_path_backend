@@ -77,6 +77,26 @@ class ExplicitDoorRouteTest extends TestCase
 
             $this->route([...$door, 'areaId' => 991600003], $coordinate, 'origin')->assertStatus(409)
                 ->assertJsonPath('replacement', null);
+            // Reaching a closed door from the public side is a distinct destination.
+            DB::table('areas')->where('id', 991600002)->update(['is_closed' => true]);
+            DB::table('routing_edges_static')->whereIn('id', [991600031, 991600032])
+                ->update(['attrs' => json_encode(['edge_type' => 'intra_area', 'valid_inside_area' => true])]);
+            $inside = [...$door, 'areaId' => 991600002];
+            $outsideOrigin = ['type' => 'coordinate', 'floor' => 0, ...$this->point(700008)];
+            $query = '/api/v1/area-doors?area_id=991600002&floor=0&mode=walk&gender=both&target=destination';
+            $this->getJson($query)->assertOk()->assertJsonPath('data.requiresOrigin', true);
+            $this->getJson($query.'&'.http_build_query(['origin' => [
+                'lat' => $outsideOrigin['lat'], 'lon' => $outsideOrigin['lon'], 'floor' => 0,
+            ]]))->assertOk()->assertJsonPath('data.doors.0.approachOnly', true)
+                ->assertJsonPath('data.doors.0.routingStatus', 'available');
+            $route = $this->route($inside, $outsideOrigin, 'destination')->assertOk()
+                ->assertJsonPath('geo.properties.entranceApproach.accessId', $door['accessId'])->json();
+            $arrival = end($route['steps']);
+            $this->assertEqualsWithDelta($point['lat'], $arrival['coord']['lat'], 0.00000001);
+            $this->assertEqualsWithDelta($point['lon'], $arrival['coord']['lon'], 0.00000001);
+            $this->route($inside, $outsideOrigin, 'origin')->assertStatus(409);
+            $this->route($inside, [...$outsideOrigin, ...$this->point(700030)], 'destination')
+                ->assertStatus(404)->assertJsonPath('status', 'NO_PATH');
         } finally {
             DB::rollBack();
         }
