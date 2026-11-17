@@ -22,3 +22,16 @@ PostgreSQL/PostGIS/pgRouting database in CI, including identical XY points on
 different floors, QR floor resolution, invalid metadata and existing
 multi-floor connector routing. CI also checks SQL rollback/reapply and PHP
 syntax. Historical database baseline files remain immutable.
+
+## Engineering basemap on the selected floor
+
+Apply `db/changes/20261117_190000_public_engineering_map_floors.up.sql` before
+publishing the engineering-map selector. It removes the basement-only guard
+from the public display tile function and filters `areas.floor = p_floor`.
+The signature, default floor (-1), public-area filter, display attributes and
+basement appearance stay unchanged. Null floors return an empty tile. No
+routing tables, routing functions or graph data are changed.
+
+Back up the database before applying it. The paired down migration restores
+the exact basement-only function. CI rehearses apply/rollback/reapply and tests
+identical XY on different floors, public/closed/private areas and null floors.
