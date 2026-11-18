@@ -252,6 +252,7 @@ class RouteAlternativeDiversityTest extends TestCase
         foreach ([
             '2026_11_09_090000_add_nearby_route_destination.php',
             '2026_11_09_110000_add_nearby_route_origin.php',
+            '2026_11_18_120000_route_from_snapped_origin.php',
         ] as $migrationName) {
             $migration = require database_path('migrations/'.$migrationName);
             $migration->up();
@@ -281,6 +282,44 @@ class RouteAlternativeDiversityTest extends TestCase
             ->assertJsonPath('geo.properties.nearbyOrigin.floor',0)
             ->assertJsonPath('geo.properties.nearbyDestination.floor',0)->json();
         $this->assertLessThan(45,$route['distanceMeters']);
+    }
+
+    public function test_snapped_start_routes_like_the_same_public_coordinate_without_cutting_through_a_private_area(): void
+    {
+        foreach (['2026_11_09_090000_add_nearby_route_destination', '2026_11_09_110000_add_nearby_route_origin',
+            '2026_11_18_120000_route_from_snapped_origin'] as $migration) {
+            (require database_path("migrations/{$migration}.php"))->up();
+        }
+        $room = $this->area([25,70,35,76]);
+        DB::table('areas')->where('id',$room)->update(['is_closed'=>true,
+            'attrs'=>json_encode(['access_policy'=>['public_access'=>false]])]);
+        $this->buildCorridors(false);
+        $request = [
+            'origin'=>$this->point(30,73) + ['type'=>'coordinate','floor'=>0],
+            'destination'=>$this->point(65,65) + ['type'=>'coordinate','floor'=>0],
+            'mode'=>'walk','gender'=>'both','lang'=>'en','maxAlternatives'=>0,'allowNearbyDestination'=>true,
+        ];
+        $route = $this->postJson('/api/v1/routing/route',$request)->assertOk()
+            ->assertJsonMissingPath('geo.properties.nearbyDestination')->json();
+        [$lat,$lon] = $route['geo']['properties']['nearbyOrigin']['coordinates'];
+        $this->assertSame([$lon,$lat],$route['geo']['geometry']['coordinates'][0]);
+        $ordinary = $request;
+        $ordinary['origin'] = ['type'=>'coordinate','floor'=>0,'lat'=>$lat,'lon'=>$lon];
+        $ordinary['allowNearbyDestination'] = false;
+        $control = $this->postJson('/api/v1/routing/route',$ordinary)->assertOk()->json();
+        $this->assertSame($control['geo']['geometry'],$route['geo']['geometry']);
+        $this->assertEqualsWithDelta($control['distanceMeters'],$route['distanceMeters'],0.001);
+
+        // A closed room overlaps the new diagonal, but leaves the static corridor open.
+        $obstacle = $this->area([45,59,52,62]);
+        DB::table('areas')->where('id',$obstacle)->update(['is_closed'=>true,
+            'attrs'=>json_encode(['access_policy'=>['public_access'=>false]])]);
+        $detour = $this->postJson('/api/v1/routing/route',$request)->assertOk()->json();
+        $this->assertSame([$lat,$lon],$detour['geo']['properties']['nearbyOrigin']['coordinates']);
+        $this->assertGreaterThan($route['distanceMeters'],$detour['distanceMeters']);
+        $this->assertFalse((bool) DB::scalar("SELECT ST_Relate(
+            ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(?),4326),32640),geom,'T********')
+            FROM areas WHERE id=?", [json_encode($detour['geo']['geometry']),$obstacle]));
     }
 
     public function test_closed_corridors_are_not_reintroduced_as_alternatives(): void
