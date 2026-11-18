@@ -43,6 +43,24 @@ final class PublicMediaUrl
         return '/storage/'.$path;
     }
 
+    public static function fromMatchingAttachment(string $url, array $attachments): string
+    {
+        foreach ($attachments as $attachment) {
+            if (!is_array($attachment) || !is_string($attachment['path'] ?? null)) {
+                continue;
+            }
+
+            // The landmark query selects the attachment URL before its storage key.
+            $source = $attachment['url'] ?? null;
+            $source = is_string($source) && trim($source) !== '' ? $source : $attachment['path'];
+            if (trim($source) === $url && ($path = self::uploadPath($attachment['path'])) !== null) {
+                return $path;
+            }
+        }
+
+        return self::from($url);
+    }
+
     public static function attachments(array $media): array
     {
         foreach ($media as $index => $item) {
