@@ -118,13 +118,15 @@ class LandmarkController extends Controller
             ->pluck('place_type', 'id');
 
         foreach ($places as $index => $place) {
-            if (is_array($place['content']['media'] ?? null)) {
-                $place['content']['media'] = PublicMediaUrl::attachments($place['content']['media']);
+            $media = $place['content']['media'] ?? null;
+            if (is_string($place['image'] ?? null)) {
+                $place['image'] = PublicMediaUrl::fromMatchingAttachment($place['image'], is_array($media) ? $media : []);
             }
-            foreach (['image', 'thumbnail'] as $field) {
-                if (is_string($place[$field] ?? null)) {
-                    $place[$field] = PublicMediaUrl::from($place[$field]);
-                }
+            if (is_array($media)) {
+                $place['content']['media'] = PublicMediaUrl::attachments($media);
+            }
+            if (is_string($place['thumbnail'] ?? null)) {
+                $place['thumbnail'] = PublicMediaUrl::from($place['thumbnail']);
             }
             $place['placeType'] = $placeTypes->get($place['id']);
             $places[$index] = $place;

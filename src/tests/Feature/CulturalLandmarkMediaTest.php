@@ -122,6 +122,27 @@ class CulturalLandmarkMediaTest extends TestCase
         }
     }
 
+    public function test_selected_uploaded_image_uses_its_storage_key_on_each_public_origin(): void
+    {
+        config(['app.url' => 'https://configured.example']);
+        $key = 'uploads/contents/933/images/نقاره-خانه.webp';
+        $legacyUrl = 'http://192.0.2.10/storage/'.dirname($key).'/'.rawurlencode(basename($key));
+        $id = $this->poi([
+            ['type' => 'image', 'path' => 'uploads/contents/933/images/other.jpg'],
+            ['type' => 'image', 'url' => $legacyUrl, 'path' => $key, 'isPrimary' => true],
+        ]);
+
+        foreach (['https://public.example', 'https://mirror.example'] as $origin) {
+            $response = $this->getJson($origin.'/api/v1/landmark-places?language=fa&poi_id='.$id)->assertOk();
+            $response->assertJsonPath('places.landmarkPlaces.0.image', '/storage/'.$key);
+            $response->assertJsonPath('places.landmarkPlaces.0.content.media.1.url', '/storage/'.$key);
+        }
+
+        $externalUrl = 'https://images.example.test/storage/'.$key;
+        DB::table('poi_points')->where('id', $id)->update(['attrs' => json_encode(['image_url' => $externalUrl])]);
+        $this->assertSame($externalUrl, $this->place($id)['image']);
+    }
+
     public function test_nonimage_unknown_or_conflicting_media_never_become_landmark_images(): void
     {
         $media = [

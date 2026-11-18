@@ -43,7 +43,9 @@ the matching frontend build so its upload hints and checks use the same limits.
 
 ## Landmark card photos
 
-`GET /api/v1/landmark-places` returns same-origin paths for local uploads and
+`GET /api/v1/landmark-places` builds the selected local photo's same-origin
+path from its attachment's storage key when available. This also works for
+attachments saved with an absolute URL on an earlier origin. The endpoint
 adds `thumbnail` when a smaller WebP is available. The map home cards prefer
 that path and fall back to `image`. The original photo is used in place details.
 
