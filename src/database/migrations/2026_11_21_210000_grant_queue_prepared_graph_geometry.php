@@ -13,8 +13,7 @@ return new class extends Migration
             throw new RuntimeException('Unable to read graph queue permissions migration: '.$path);
         }
 
-        // Artisan manages the transaction when running the standalone SQL.
-        DB::unprepared(preg_replace('/^(?:BEGIN|COMMIT);[ \t]*\r?$/m', '', $sql));
+        DB::unprepared($sql);
     }
 
     public function down(): void

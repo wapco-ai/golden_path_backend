@@ -129,6 +129,10 @@ $sql$,$sql$$sql$);
                     CASE WHEN permission.grantee=0 THEN 'PUBLIC'
                          ELSE quote_ident(pg_get_userbyid(permission.grantee)) END);
             END LOOP;
+            -- Area graph rebuilds call the same helpers under the queue role.
+            IF to_regrole('gp_queue_runtime') IS NOT NULL THEN
+                EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO gp_queue_runtime', helper);
+            END IF;
         END LOOP;
     END IF;
 
