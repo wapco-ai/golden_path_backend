@@ -26,11 +26,13 @@ class ConnectorService
         if (!$dap || (int) $dap->floor !== $floor || $dap->needs_review) {
             throw ValidationException::withMessages([$errorField => self::INVALID_ACCESS_MESSAGE]);
         }
+        // A saved stop must stay walkable until its transaction commits.
+        $lock = DB::transactionLevel() > 0 ? ' FOR SHARE OF a' : '';
         return DB::select("SELECT a.id, a.floor, COALESCE(t.txt, 'محدوده ' || a.id) AS name
             FROM areas a LEFT JOIN LATERAL (SELECT txt FROM i18n_texts
               WHERE entity_table='areas' AND entity_id=a.id AND field='name' AND lang='fa' LIMIT 1) t ON true
             WHERE a.floor=? AND a.id IN (?,?) AND fn_area_routing_role(a.area_type,a.attrs)='routable'
-            ORDER BY a.id", [$floor, $dap->from_area, $dap->to_area]);
+            ORDER BY a.id".$lock, [$floor, $dap->from_area, $dap->to_area]);
     }
 
     public function show(int $id): array
@@ -134,7 +136,7 @@ class ConnectorService
                 'version' => $version, 'updated_at' => now(),
             ]);
             return $id;
-        });
+        }, 3);
         return $this->show($id);
     }
 }

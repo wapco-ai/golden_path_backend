@@ -31,6 +31,7 @@
             <file>tests/Feature/GuidanceRoleMigrationTest.php</file>
         </testsuite>
         <testsuite name="SameFloorStairs">
+            <file>tests/Feature/AreaTypeTest.php</file>
             <file>tests/Feature/SameFloorStairTest.php</file>
             <file>tests/Feature/SameFloorStairRouteOutputTest.php</file>
         </testsuite>

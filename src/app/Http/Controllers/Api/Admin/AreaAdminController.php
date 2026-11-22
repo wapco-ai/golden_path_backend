@@ -8,11 +8,13 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 use App\Services\I18nTextService;
+use Illuminate\Validation\ValidationException;
 
 
 class AreaAdminController extends Controller
 {
     private const PUBLIC_ACCESS_RESTRICTION = 'system:area-public-access';
+    private const AREA_TYPES = 'in:courtyard,riwaq,iwan,mosque,corridor,elevator_area,stair_area,ramp_area,admin_zone,storage_area,facility_area,service_room,warehouse_area,technical_area,functional_area';
 
     /**
      * GET /api/v1/areas
@@ -251,7 +253,7 @@ class AreaAdminController extends Controller
             'prayer_restrictions'         => 'nullable|array',
 
             'geometry'                    => 'required|array',
-            'meta.area_type'              => 'required|string|max:50',
+            'meta.area_type'              => ['required', 'string', self::AREA_TYPES],
             'meta.floor'                  => 'required|integer',
             'meta.allowed_gender'         => 'nullable|string|max:20',
             'meta.is_closed'              => 'nullable|boolean',
@@ -394,7 +396,8 @@ class AreaAdminController extends Controller
                 'routing_role'                 => 'sometimes|required|in:default,routable,doorstep_only',
 
                 'geometry'                    => 'sometimes|array',
-                'meta.area_type'              => 'sometimes|string|max:50',
+                'meta.area_type'              => ['sometimes', 'required', 'string', self::AREA_TYPES],
+                'meta.expected_area_type'     => ['sometimes', 'required', 'string', self::AREA_TYPES],
                 'meta.floor'                  => 'sometimes|integer',
                 'meta.allowed_gender'         => 'sometimes|string|max:20',
                 'meta.is_closed'              => 'sometimes|boolean',
@@ -459,7 +462,8 @@ class AreaAdminController extends Controller
         return DB::transaction(function () use ($data, $id, $derivedAllowedGender, $derivedIsClosed) {
 
             $routingRole = $data['routing_role'] ?? null;
-            if ($routingRole !== null) {
+            $requestedType = $data['meta']['area_type'] ?? null;
+            if ($routingRole !== null || $requestedType !== null) {
                 // Use the same per-door lock as graph jobs, before taking the area lock.
                 DB::select('
                     SELECT pg_advisory_xact_lock(d.door_id)
@@ -475,7 +479,7 @@ class AreaAdminController extends Controller
             $currentArea = DB::table('areas')
                 ->where('id', $id)
                 ->lockForUpdate()
-                ->first(['attrs']);
+                ->first(['attrs', 'area_type']);
 
             if (!$currentArea) {
                 return response()->json([
@@ -484,6 +488,14 @@ class AreaAdminController extends Controller
             }
 
             $attrs = json_decode($currentArea->attrs ?? '{}', true) ?? [];
+            $expectedType = $data['meta']['expected_area_type'] ?? null;
+            if ($expectedType !== null && $expectedType !== $currentArea->area_type) {
+                abort(409, 'نوع محدوده تغییر کرده است. فرم را دوباره باز کنید.');
+            }
+            $typeChanged = $requestedType !== null && $requestedType !== $currentArea->area_type;
+            if ($typeChanged && $routingRole === null) {
+                $routingRole = 'default';
+            }
 
             foreach (['basic_info', 'grouping', 'operational', 'time_restrictions', 'prayer_restrictions'] as $key) {
                 if (array_key_exists($key, $data)) {
@@ -558,14 +570,30 @@ class AreaAdminController extends Controller
 
             $bindings[] = $id;
 
-            $row = DB::selectOne($sql, $bindings);
-
             if ($routingRole !== null) {
-                if ($row->default_routing_role === 'transparent') {
-                    throw \Illuminate\Validation\ValidationException::withMessages([
+                $targetType = $requestedType ?? $currentArea->area_type;
+                $defaultRole = DB::scalar('SELECT public.fn_area_routing_role(?::area_type_enum)', [$targetType]);
+                if ($defaultRole === 'transparent' && $routingRole !== 'default') {
+                    throw ValidationException::withMessages([
                         'routing_role' => 'نقش مسیریابی این نوع اتصال از تنظیمات اتصال تعیین می‌شود.',
                     ]);
                 }
+                if ($targetType === 'corridor' && $routingRole === 'doorstep_only') {
+                    throw ValidationException::withMessages(['routing_role' => 'عبور از داخل راهرو باید مجاز باشد.']);
+                }
+                $effectiveRole = $attrs['routing_role'] ?? $defaultRole;
+                $this->checkAreaConnections((int) $id, $effectiveRole !== 'routable',
+                    $typeChanged && $currentArea->area_type === 'stair_area');
+            }
+            try {
+                $row = DB::selectOne($sql, $bindings);
+            } catch (\Illuminate\Database\QueryException $error) {
+                if ($error->getCode() !== '23514' || !str_contains($error->getMessage(), 'An active stair footprint')) {
+                    throw $error;
+                }
+                throw ValidationException::withMessages(['meta.area_type' => 'محدوده با فضای یک پلهٔ فعال هم‌پوشانی دارد. هندسه و پاگردهای پله را بررسی کنید.']);
+            }
+            if ($routingRole !== null) {
                 $graph = DB::selectOne('SELECT public.fn_sync_area_routing_graph(?::bigint) AS result', [$id]);
                 $row->area_graph = json_decode($graph->result ?? '', true);
                 if ($row->area_graph === null || $row->area_graph['status'] === 'incomplete') {
@@ -593,7 +621,28 @@ class AreaAdminController extends Controller
             }
 
             return response()->json($row);
-        });
+        }, 3);
+    }
+
+    private function checkAreaConnections(int $areaId, bool $losesAccess, bool $losesStair): void
+    {
+        if (!$losesAccess && !$losesStair) {
+            return;
+        }
+        $uses = DB::select("SELECT DISTINCT c.id, s.floor,
+                COALESCE(NULLIF(c.info #>> '{basic_info,title,fa}', ''), 'اتصال ' || c.id) AS name
+            FROM routing_connector_stops s JOIN routing_connectors c ON c.id=s.connector_id
+            WHERE ?::boolean AND s.area_id=? AND c.is_active
+            UNION ALL
+            SELECT id, floor, COALESCE(NULLIF(info #>> '{basic_info,title,fa}', ''), 'پله ' || id)
+            FROM same_floor_stairs WHERE is_active AND
+              ((?::boolean AND ? IN (start_area_id,end_area_id)) OR (?::boolean AND stair_area_id=?))
+            ORDER BY floor, id", [$losesAccess, $areaId, $losesAccess, $areaId, $losesStair, $areaId]);
+        if ($uses) {
+            $names = array_map(fn ($use) => "«{$use->name}» (طبقه {$use->floor}، شناسه {$use->id})", $uses);
+            throw ValidationException::withMessages(['meta.area_type' =>
+                'این محدوده در اتصال فعال استفاده می‌شود. ابتدا محدودهٔ جایگزین را در تنظیمات اتصال تعیین کنید: '.implode('، ', $names)]);
+        }
     }
 
     private function syncPublicAccessRestriction(int $id, bool $publicAccess, string $areaType, array $attrs): void

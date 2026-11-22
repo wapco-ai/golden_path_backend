@@ -98,6 +98,18 @@ class SameFloorStairTest extends TestCase
         ]);
     }
 
+    public function test_area_type_editor_preserves_active_stair_and_both_landings(): void
+    {
+        $this->withoutMiddleware([AdminAuth::class, AdminSectionAccess::class]);
+        $this->postJson(self::API, $this->payload())->assertCreated();
+        $this->putJson("/api/v1/areas/{$this->stairArea}", ['meta' => ['area_type' => 'corridor']])
+            ->assertUnprocessable()->assertJsonValidationErrors('meta.area_type');
+        foreach ($this->stops as $stop) {
+            $this->putJson('/api/v1/areas/'.$stop['area_id'], ['routing_role' => 'doorstep_only'])
+                ->assertUnprocessable()->assertJsonValidationErrors('meta.area_type');
+        }
+    }
+
     public function test_registered_stair_routes_in_both_directions_and_respects_access(): void
     {
         $this->withoutMiddleware([AdminAuth::class, AdminSectionAccess::class]);
