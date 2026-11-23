@@ -182,6 +182,15 @@ class RoutingController extends Controller
                     }
                 }
                 $endpoint = $doorEndpoints->resolve($point, $side === 'origin' ? $originFloor : $destinationFloor, $mode, $gender, $lang);
+                if ($side === 'destination' && ($endpoint['reason'] ?? null) === 'unavailable') {
+                    $local = app(\App\Services\PublicEntranceApproach::class)->find($resolved['origin'], $originFloor,
+                        $destinationFloor, [(int) $point['areaId']], (int) $point['accessId'], $mode, $gender);
+                    if ($local) {
+                        $resolved[$side] = ['lat' => (float) $local[0]->lat, 'lon' => (float) $local[0]->lon,
+                            'approachAreaId' => (int) $point['areaId'], 'accessId' => (int) $point['accessId'], 'localEntrance' => $local[0]];
+                        continue;
+                    }
+                }
                 if (isset($endpoint['reason'])) {
                     $log['meta']['status'] = 'DOOR_UNAVAILABLE';
                     $log['meta']['http_code'] = 409;
