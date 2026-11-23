@@ -113,12 +113,13 @@ class AreaDoorsController extends Controller
 
         if (!empty($payload['doors']) && ($destination || isset($data['mode']) || isset($data['gender']))) {
             $reachable = [];
-            if ($denied && !empty($data['origin'])) {
+            $start = null;
+            if ($destination && !empty($data['origin'])) {
                 $origin = $data['origin'];
                 $start = isset($origin['accessId'])
                     ? $doorEndpoints->resolve($origin, (int) $origin['floor'], $mode, $gender, $lang)
                     : $origin;
-                if (!isset($start['reason'])) {
+                if ($denied && !isset($start['reason'])) {
                     $reachable = app(\App\Services\MultiFloorRoutingService::class)->reachableEntrances(
                         $gender, $mode, (int) $origin['floor'], $floor, $start, $ids);
                 }
@@ -141,6 +142,18 @@ class AreaDoorsController extends Controller
                 }
             }
             unset($door);
+            if ($start !== null && !isset($start['reason']) && collect($payload['doors'])->contains('routingStatus', 'unavailable')) {
+                $local = app(\App\Services\PublicEntranceApproach::class)->find($start, (int) $origin['floor'], $floor,
+                    $ids, null, $mode, $gender);
+                $accessIds = array_map(fn ($row) => (int) $row->access_id, $local);
+                foreach ($payload['doors'] as &$door) {
+                    if ($door['routingStatus'] === 'unavailable' && in_array((int) $door['accessId'], $accessIds, true)) {
+                        $door['routingStatus'] = 'available';
+                        $door['approachOnly'] = true;
+                    }
+                }
+                unset($door);
+            }
         }
 
         // 5) خروجی نهایی OK

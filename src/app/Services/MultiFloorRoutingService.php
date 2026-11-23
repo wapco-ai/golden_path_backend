@@ -34,7 +34,11 @@ class MultiFloorRoutingService
             if (isset($destination['approachAreaId'])) {
                 $bindings = $this->approachBindings($gender, $mode, $originFloor, $destinationFloor, $origin,
                     [$destination['approachAreaId']], $destination['accessId']);
-                $rows = $this->selectEdges(self::APPROACH_EDGES, $bindings);
+                $rows = isset($destination['localEntrance']) ? [$destination['localEntrance']] : $this->selectEdges(self::APPROACH_EDGES, $bindings);
+                if (!$rows) {
+                    $rows = app(PublicEntranceApproach::class)->find($origin, $originFloor, $destinationFloor,
+                        [$destination['approachAreaId']], $destination['accessId'], $mode, $gender);
+                }
                 if (!$rows) return ['status' => 'NO_PATH', 'steps' => [], 'alternatives' => []];
                 $route = $this->assemble($rows, $mode, $lang);
                 $last = array_key_last($route['steps']);
@@ -64,6 +68,11 @@ class MultiFloorRoutingService
                     [$gender, $mode, $originFloor, $destinationFloor, $origin['lon'], $origin['lat'], $destination['privateAreaId'], $originNode]
                 );
 
+                if (!$rows) {
+                    $local = app(PublicEntranceApproach::class)->find($origin, $originFloor, $destinationFloor,
+                        [$destination['privateAreaId']], null, $mode, $gender);
+                    if ($local) $rows = [$local[0]];
+                }
                 return $rows ? $this->privateAreaRoute($rows, $mode, $lang, $destinationName) : [
                     'status' => 'NO_PATH',
                     'message' => 'مسیر قابل‌دسترسی تا نزدیکی این محدوده پیدا نشد.',

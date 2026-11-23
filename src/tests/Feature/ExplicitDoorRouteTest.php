@@ -97,6 +97,25 @@ class ExplicitDoorRouteTest extends TestCase
             $this->route($inside, $outsideOrigin, 'origin')->assertStatus(409);
             $this->route($inside, [...$outsideOrigin, ...$this->point(700030)], 'destination')
                 ->assertStatus(404)->assertJsonPath('status', 'NO_PATH');
+
+            // A public courtyard can have no live through-edge at a private entrance.
+            // The public approach must still end at the DAP on the shared boundary.
+            DB::table('routing_edges_static')->whereIn('id', [991600031, 991600032, 991600033])->delete();
+            DB::table('doors')->where('id', 991600011)->update(['is_open' => true]);
+            DB::table('areas')->where('id', 991600002)->update([
+                'attrs' => '{"routing_role":"routable","access_policy":{"public_access":false}}',
+            ]);
+            DB::statement('UPDATE routing_nodes n SET geom=p.geom FROM door_access_points p
+                WHERE n.id=991600011 AND n.ref_id=p.id');
+            $privateArea = ['type' => 'privateArea', 'id' => 991600002, 'floor' => 0];
+            foreach ([$door, $inside, $privateArea] as $destination) {
+                $route = $this->route($destination, $outsideOrigin, 'destination')->assertOk()->json();
+                $coordinates = $route['geo']['geometry']['coordinates'];
+                $this->assertEqualsWithDelta($point['lon'], end($coordinates)[0], 0.00000001);
+                $this->assertEqualsWithDelta($point['lat'], end($coordinates)[1], 0.00000001);
+            }
+            DB::table('door_access_points')->where('id', 991600011)->update(['needs_review' => true]);
+            $this->route($door, $outsideOrigin, 'destination')->assertStatus(409);
         } finally {
             DB::rollBack();
         }
